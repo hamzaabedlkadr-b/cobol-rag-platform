@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cobol-rag-platform"
+version = "0.1.0"
+description = "Thin orchestrator for COBOL analysis, cobol-rekt evidence, and RAG indexing."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.scripts]
+cobol-platform = "cobol_rag_platform.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+

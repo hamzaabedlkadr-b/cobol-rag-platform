@@ -1,0 +1,12 @@
+chromadb
+fastapi
+llama-index
+llama-index-embeddings-ollama
+llama-index-llms-ollama
+llama-index-vector-stores-chroma
+pydantic-settings
+pyyaml
+requests
+rich
+typer
+uvicorn

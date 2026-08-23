@@ -1,0 +1,33 @@
+version = 1
+
+[repositories]
+analysis = "/repos/analysis"
+cobol_rekt = "/opt/cobol-rekt"
+rag = "/repos/rag"
+
+[analysis]
+python = "python"
+runner = "scripts/pipeline/run_fixed_input.py"
+mode = "auto"
+rag_profile = "full"
+copy_mode = "referenced"
+
+[rekt]
+python = "python"
+required = true
+command = [
+  "{rekt_python}", "-m", "cobol_rag_platform.rekt_runner",
+  "--repo", "{rekt_repo}",
+  "--source", "{prepared_program_dir}/{source_name}",
+  "--output", "{rekt_output}",
+]
+output = "{run_dir}/rekt/knowledge-base_rag"
+
+[rag]
+python = "python"
+collection_prefix = "cobol"
+llm_model = "granite-code:8b-instruct"
+embedding_model = "mxbai-embed-large:latest"
+llm_base_url = "http://ollama:11434"
+embedding_base_url = "http://ollama:11434"
+ensure_models = true

@@ -1,0 +1,33 @@
+version = 1
+
+[repositories]
+analysis = "../../control_flow"
+cobol_rekt = "../../cobol-rekt"
+rag = "../../cobol-rag-pipeline"
+
+[analysis]
+python = "python3"
+runner = "scripts/pipeline/run_fixed_input.py"
+mode = "auto"
+rag_profile = "full"
+copy_mode = "referenced"
+
+[rekt]
+python = "python3"
+required = true
+command = [
+  "{rekt_python}", "-m", "cobol_rag_platform.rekt_runner",
+  "--repo", "{rekt_repo}",
+  "--source", "{prepared_program_dir}/{source_name}",
+  "--output", "{rekt_output}",
+]
+output = "{run_dir}/rekt/knowledge-base_rag"
+
+[rag]
+python = "python3"
+collection_prefix = "cobol"
+llm_model = "granite-code:8b-instruct"
+embedding_model = "mxbai-embed-large:latest"
+llm_base_url = "http://localhost:11434"
+embedding_base_url = "http://localhost:11434"
+ensure_models = false

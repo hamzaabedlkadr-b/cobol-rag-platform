@@ -1,0 +1,10 @@
+[program]
+name = "PDCBVC"
+cobol_source = "input/PDCBVC/PDCBVC.CBL"
+copybooks = "input/PDCBVC/copybooks"
+mapa = "input/PDCBVC/PDCBVC_result.txt"
+controlflow = "input/PDCBVC/PDCBVC_controlflow.json"
+
+# If a bundle already exists, use a path relative to the analysis repository:
+# rekt_bundle = "input/PDCBVC/knowledge-base_rag"
+

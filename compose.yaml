@@ -1,0 +1,89 @@
+name: cobol-rag-platform
+
+services:
+  ollama:
+    image: ollama/ollama:latest
+    volumes:
+      - ollama-data:/root/.ollama
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  pipeline:
+    build:
+      context: .
+      dockerfile: docker/platform.Dockerfile
+      additional_contexts:
+        cobol_rekt: ${COBOL_REKT_REPO:-../cobol-rekt}
+    depends_on:
+      ollama:
+        condition: service_healthy
+    environment:
+      COBOL_RAG_LLM_MODEL: ${COBOL_RAG_LLM_MODEL:-granite-code:8b-instruct}
+      COBOL_RAG_EMBEDDING_MODEL: ${COBOL_RAG_EMBEDDING_MODEL:-mxbai-embed-large:latest}
+      # Docker Desktop on macOS cannot pass through the Apple GPU, so inference in
+      # the ollama container is CPU-only. Point at the host's native Ollama, which
+      # uses Metal. Override to http://ollama:11434 to fall back to the container.
+      COBOL_RAG_LLM_BASE_URL: ${COBOL_RAG_LLM_BASE_URL:-http://host.docker.internal:11434}
+      COBOL_RAG_EMBEDDING_BASE_URL: ${COBOL_RAG_EMBEDDING_BASE_URL:-http://host.docker.internal:11434}
+      COBOL_RAG_CONSTRAINED_ROUTING: ${COBOL_RAG_CONSTRAINED_ROUTING:-0}
+    volumes:
+      - type: bind
+        source: ${ANALYSIS_REPO:-../control_flow}
+        target: /repos/analysis
+        read_only: true
+      - type: bind
+        source: ${RAG_REPO:-../cobol-rag-pipeline}
+        target: /repos/rag
+        read_only: true
+      - type: bind
+        source: ./programs
+        target: /workspace/programs
+        read_only: true
+      - type: bind
+        source: ./.runs
+        target: /workspace/.runs
+
+  rag-api:
+    build:
+      context: .
+      dockerfile: docker/platform.Dockerfile
+      additional_contexts:
+        cobol_rekt: ${COBOL_REKT_REPO:-../cobol-rekt}
+    entrypoint: ["python", "-m", "cobol_rag_platform"]
+    command: ["serve", "PDCBVC", "--host", "0.0.0.0", "--port", "8000"]
+    depends_on:
+      ollama:
+        condition: service_healthy
+    environment:
+      COBOL_RAG_LLM_MODEL: ${COBOL_RAG_LLM_MODEL:-granite-code:8b-instruct}
+      COBOL_RAG_EMBEDDING_MODEL: ${COBOL_RAG_EMBEDDING_MODEL:-mxbai-embed-large:latest}
+      # Docker Desktop on macOS cannot pass through the Apple GPU, so inference in
+      # the ollama container is CPU-only. Point at the host's native Ollama, which
+      # uses Metal. Override to http://ollama:11434 to fall back to the container.
+      COBOL_RAG_LLM_BASE_URL: ${COBOL_RAG_LLM_BASE_URL:-http://host.docker.internal:11434}
+      COBOL_RAG_EMBEDDING_BASE_URL: ${COBOL_RAG_EMBEDDING_BASE_URL:-http://host.docker.internal:11434}
+      COBOL_RAG_CONSTRAINED_ROUTING: ${COBOL_RAG_CONSTRAINED_ROUTING:-0}
+    ports:
+      - "8000:8000"
+    volumes:
+      - type: bind
+        source: ${ANALYSIS_REPO:-../control_flow}
+        target: /repos/analysis
+        read_only: true
+      - type: bind
+        source: ${RAG_REPO:-../cobol-rag-pipeline}
+        target: /repos/rag
+        read_only: true
+      - type: bind
+        source: ./programs
+        target: /workspace/programs
+        read_only: true
+      - type: bind
+        source: ./.runs
+        target: /workspace/.runs
+
+volumes:
+  ollama-data:
