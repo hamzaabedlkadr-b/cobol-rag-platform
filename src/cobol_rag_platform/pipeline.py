@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import os
 import shutil
 import subprocess
@@ -18,6 +19,13 @@ from cobol_rag_platform.config import PlatformConfig, ProgramConfig
 
 
 STAGES = ("prepare", "rekt", "analysis", "models", "index")
+
+
+# MAP('X') / MAPSET('Y') inside an EXEC CICS statement. The pipeline repo
+# carries the same two patterns in cobol_rag/scope.py for installations that
+# have no corpus registry; keep them in step.
+_MAP_NAME = re.compile(r"\bMAP\s*\(\s*['\"]([A-Z0-9$#@-]{1,8})['\"]\s*\)", re.IGNORECASE)
+_MAPSET_NAME = re.compile(r"\bMAPSET\s*\(\s*['\"]([A-Z0-9$#@-]{1,8})['\"]\s*\)", re.IGNORECASE)
 
 
 class PipelineError(RuntimeError):
@@ -625,6 +633,24 @@ observability:
                 copybook_content = self._read_json_file(copybook_path).get("content", {}) if copybook_path else {}
                 for name in copybook_content.get("all", []) if isinstance(copybook_content, dict) else []:
                     add("copybook", name)
+
+                # BMS map and mapset names are the only identifiers a user can
+                # name that appear solely inside CICS statements. Without them a
+                # question about PDCBVC1 resolves to nothing and is answered
+                # "not present in the analyzed corpus" -- a denial of evidence
+                # the corpus actually holds. map and mapset stay distinct types
+                # because a mapset name is frequently also a COPY member, and
+                # collapsing them would collide with the copybook entity.
+                cics_path = next(iter(program_root.rglob("architecture.cics_operations.json")), None)
+                cics_content = self._read_json_file(cics_path).get("content", {}) if cics_path else {}
+                cics_operations = cics_content.get("operations", []) if isinstance(cics_content, dict) else []
+                for operation in cics_operations if isinstance(cics_operations, list) else []:
+                    if not isinstance(operation, dict):
+                        continue
+                    statement = str(operation.get("statement", ""))
+                    for entity_type, pattern in (("map", _MAP_NAME), ("mapset", _MAPSET_NAME)):
+                        for match in pattern.finditer(statement):
+                            add(entity_type, match.group(1))
 
                 cfg_path = next(iter(program_root.rglob("controlflow.cfg.json")), None)
                 nodes = self._read_json_file(cfg_path).get("nodes", []) if cfg_path else []

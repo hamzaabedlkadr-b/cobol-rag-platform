@@ -58,6 +58,13 @@ class PlatformTests(unittest.TestCase):
             (source / "controlflow.cfg.json").write_text(
                 json.dumps({"nodes": [{"id": "PARA-1"}]}), encoding="utf-8",
             )
+            (source / "architecture.cics_operations.json").write_text(
+                json.dumps({"content": {"operations": [{
+                    "command": "SEND", "paragraph": "SEND-SCREEN1",
+                    "statement": "EXEC CICS SEND MAP('SCREEN1') MAPSET('SCRNSET') END-EXEC.",
+                }]}}),
+                encoding="utf-8",
+            )
 
             pipeline = Pipeline(platform, program, temp_root / "runs")
             pipeline._publish_program_artifacts(source)
@@ -70,6 +77,20 @@ class PlatformTests(unittest.TestCase):
             self.assertEqual(registry["program_count"], 1)
             values = {item["value"] for item in registry["programs"][0]["entities"]}
             self.assertTrue({"TEST-FIELD", "CALLED1", "COPY1", "PARA-1"}.issubset(values))
+
+            # BMS map and mapset names exist only inside CICS statements. Without
+            # them here the RAG resolves no entity for a map and answers that it
+            # is not present in the corpus -- the registry short-circuits the
+            # artifact walk, so this is the only place they can be added.
+            typed = {
+                (item["type"], item["value"])
+                for item in registry["programs"][0]["entities"]
+            }
+            self.assertIn(("map", "SCREEN1"), typed)
+            # Distinct types: a mapset name is frequently also a COPY member, so
+            # collapsing the two would collide with the copybook entity.
+            self.assertIn(("mapset", "SCRNSET"), typed)
+            self.assertNotIn(("map", "SCRNSET"), typed)
 
 
 if __name__ == "__main__":
