@@ -131,16 +131,27 @@ cobol-platform status PDCBVC
 cobol-platform serve PDCBVC --port 8000
 ```
 
-Generated state is isolated in `.runs/PROGRAM/`; source repositories are mounted read-only in Docker. Stage fingerprints include input contents, relevant pipeline code, configuration, model names, and the selected evidence bundle.
+Analysis state is isolated in `.runs/PROGRAM/`; source repositories are mounted read-only in Docker. Each completed program is incrementally published into `.runs/_corpus/rag/`, so the API searches one collection and enforces the program resolved from the question. Stage fingerprints include input contents, relevant pipeline code, configuration, model names, and the selected evidence bundle.
+
+Adding another program does not reset programs already indexed:
+
+```bash
+docker compose run --rm pipeline run PROGA
+docker compose run --rm pipeline run PROGB
+docker compose up rag-api
+```
+
+The shared `corpus.registry.json` is a small deterministic routing catalogue. It resolves program and COBOL entity names before vector retrieval; if a corpus contains multiple programs and a question names none, the assistant asks the user to select one rather than leaking evidence from an arbitrary program.
 
 ## RAG Reliability Outputs
 
-The one-command run now creates these program-specific runtime directories:
+The one-command run now creates these shared runtime directories:
 
 ```text
-.runs/PROGRAM/rag/data/traces/     per-answer route/retrieval/guard traces
-.runs/PROGRAM/rag/data/feedback/   user feedback linked to trace IDs
-.runs/PROGRAM/rag/data/eval/       JSON and Markdown gold-evaluation reports
+.runs/_corpus/rag/data/traces/     per-answer route/retrieval/guard traces
+.runs/_corpus/rag/data/feedback/   user feedback linked to trace IDs
+.runs/_corpus/rag/data/eval/       JSON and Markdown gold-evaluation reports
+.runs/_corpus/rag/final_scripts/   program-separated direct evidence
 ```
 
 The RAG runtime compiles each request into a typed query plan (program, multiple entities, intent, operations, positive/negative filters, qualifiers, and requested fields). Deterministic evidence handlers and program-filtered hybrid retrieval execute the same plan, with explicit-only follow-up state, corrective exact-identifier lookup, bounded parent/sibling expansion, plan-contract and claim-level validation, and evidence-based abstention.
@@ -151,10 +162,10 @@ Run the checked-in PDCBVC gold suite against the live Docker models and collecti
 docker compose exec \
   -e PYTHONPATH=/repos/rag/src \
   rag-api python -m cobol_rag.evaluation \
-    --config /workspace/.runs/PDCBVC/rag/config/runtime.yaml \
+    --config /workspace/.runs/_corpus/rag/config/runtime.yaml \
     --gold /repos/rag/evals/pdcbvc_gold.jsonl \
-    --final-scripts-dir /workspace/.runs/PDCBVC/analysis/output/combined/final_scripts/PDCBVC \
-    --output-dir /workspace/.runs/PDCBVC/rag/data/eval
+    --final-scripts-dir /workspace/.runs/_corpus/rag/final_scripts \
+    --output-dir /workspace/.runs/_corpus/rag/data/eval
 ```
 
 The API exposes answer traces at `/api/traces` and corrective feedback at `/api/feedback`.

@@ -62,7 +62,18 @@ class Pipeline:
 
     @property
     def rag_runtime(self) -> Path:
+        # Analysis state remains program-specific, but all programs publish into
+        # one searchable corpus so an explicit program name can be enforced at
+        # retrieval time.
+        return self.runs_root / "_corpus" / "rag"
+
+    @property
+    def legacy_rag_runtime(self) -> Path:
         return self.run_dir / "rag"
+
+    @property
+    def corpus_final_scripts(self) -> Path:
+        return self.rag_runtime / "final_scripts"
 
     def run(self, stop_after: str = "index") -> list[StageResult]:
         if stop_after not in STAGES:
@@ -156,6 +167,10 @@ class Pipeline:
 
     @property
     def collection(self) -> str:
+        return f"{self.platform.rag.collection_prefix}-corpus"
+
+    @property
+    def legacy_collection(self) -> str:
         return f"{self.platform.rag.collection_prefix}-{self.program.name.lower()}"
 
     def stage_prepare(self) -> StageResult:
@@ -285,23 +300,8 @@ class Pipeline:
             raise PipelineError(f"RAG artifact does not exist: {artifact}")
         config_path = self.rag_runtime / "config" / "runtime.yaml"
         if not self.dry_run:
-            self._write_rag_runtime(config_path, final_scripts)
-        if manifest.is_file() and not self.dry_run:
-            reset_command = [
-                self.platform.rag.python,
-                "-m",
-                "cobol_rag.cli",
-                "reset",
-                "--apply",
-                "--config",
-                str(config_path),
-            ]
-            self._run_command(
-                "RAG index reset",
-                reset_command,
-                cwd=self.platform.repositories.rag,
-                env=self._rag_environment(final_scripts),
-            )
+            self._publish_program_artifacts(final_scripts)
+            self._write_rag_runtime(config_path, self.corpus_final_scripts)
         command = [
             self.platform.rag.python,
             "-m",
@@ -312,7 +312,7 @@ class Pipeline:
             "--config",
             str(config_path),
         ]
-        env = self._rag_environment(final_scripts)
+        env = self._rag_environment(self.corpus_final_scripts)
         self._run_command("RAG index", command, cwd=self.platform.repositories.rag, env=env)
         if not self.dry_run and not manifest.is_file():
             raise PipelineError(f"RAG sync completed but collection manifest is missing: {manifest}")
@@ -325,11 +325,21 @@ class Pipeline:
 
     def serve(self, host: str, port: int) -> None:
         mode = self._analysis_mode(self._resolve_bundle(allow_missing=True))
-        _, final_scripts = self._rag_source(mode)
-        manifest = self.rag_runtime / "data" / "manifests" / f"{self.collection}.json"
+        _, program_final_scripts = self._rag_source(mode)
+        runtime = self.rag_runtime
+        final_scripts = self.corpus_final_scripts
+        collection = self.collection
+        manifest = runtime / "data" / "manifests" / f"{collection}.json"
+        if not manifest.is_file():
+            # Preserve existing single-program deployments until they are indexed
+            # once with the shared-corpus runtime.
+            runtime = self.legacy_rag_runtime
+            final_scripts = program_final_scripts
+            collection = self.legacy_collection
+            manifest = runtime / "data" / "manifests" / f"{collection}.json"
         if not manifest.is_file():
             raise PipelineError(f"Collection is not indexed. Run the pipeline first: {manifest}")
-        self._prepare_prompt()
+        self._prepare_prompt(runtime)
         command = [
             self.platform.rag.python,
             "-m",
@@ -340,7 +350,12 @@ class Pipeline:
             "--port",
             str(port),
         ]
-        self._run_command("RAG API", command, cwd=self.rag_runtime, env=self._rag_environment(final_scripts))
+        self._run_command(
+            "RAG API",
+            command,
+            cwd=runtime,
+            env=self._rag_environment(final_scripts, runtime=runtime, collection=collection),
+        )
 
     def _analysis_command(self, bundle: Path | None, mode: str) -> list[str]:
         command = [
@@ -457,21 +472,22 @@ class Pipeline:
 
     def _write_rag_runtime(self, path: Path, final_scripts: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
-        (self.rag_runtime / "data" / "inbox").mkdir(parents=True, exist_ok=True)
-        (self.rag_runtime / "data" / "archive").mkdir(parents=True, exist_ok=True)
-        (self.rag_runtime / "data" / "manifests").mkdir(parents=True, exist_ok=True)
-        (self.rag_runtime / "data" / "traces").mkdir(parents=True, exist_ok=True)
-        (self.rag_runtime / "data" / "feedback").mkdir(parents=True, exist_ok=True)
-        (self.rag_runtime / "data" / "eval").mkdir(parents=True, exist_ok=True)
-        self._prepare_prompt()
+        runtime = self.rag_runtime
+        (runtime / "data" / "inbox").mkdir(parents=True, exist_ok=True)
+        (runtime / "data" / "archive").mkdir(parents=True, exist_ok=True)
+        (runtime / "data" / "manifests").mkdir(parents=True, exist_ok=True)
+        (runtime / "data" / "traces").mkdir(parents=True, exist_ok=True)
+        (runtime / "data" / "feedback").mkdir(parents=True, exist_ok=True)
+        (runtime / "data" / "eval").mkdir(parents=True, exist_ok=True)
+        self._prepare_prompt(runtime)
         payload = f'''paths:
-  chroma_dir: "{self.rag_runtime / '.chroma'}"
-  inbox_dir: "{self.rag_runtime / 'data' / 'inbox'}"
-  archive_dir: "{self.rag_runtime / 'data' / 'archive'}"
-  manifest_dir: "{self.rag_runtime / 'data' / 'manifests'}"
-  trace_dir: "{self.rag_runtime / 'data' / 'traces'}"
-  feedback_dir: "{self.rag_runtime / 'data' / 'feedback'}"
-  eval_dir: "{self.rag_runtime / 'data' / 'eval'}"
+  chroma_dir: "{runtime / '.chroma'}"
+  inbox_dir: "{runtime / 'data' / 'inbox'}"
+  archive_dir: "{runtime / 'data' / 'archive'}"
+  manifest_dir: "{runtime / 'data' / 'manifests'}"
+  trace_dir: "{runtime / 'data' / 'traces'}"
+  feedback_dir: "{runtime / 'data' / 'feedback'}"
+  eval_dir: "{runtime / 'data' / 'eval'}"
 
 llm:
   provider: "ollama"
@@ -503,7 +519,7 @@ retrieval:
 answers:
   require_citations: true
   show_sources: true
-  system_prompt_path: "{self.rag_runtime / 'config' / 'system_prompt.md'}"
+  system_prompt_path: "{runtime / 'config' / 'system_prompt.md'}"
   max_context_chars: 6000
 
 observability:
@@ -511,7 +527,7 @@ observability:
   include_hit_previews: false
 '''
         path.write_text(payload, encoding="utf-8")
-        (self.rag_runtime / "runtime.json").write_text(
+        (runtime / "runtime.json").write_text(
             json.dumps(
                 {
                     "program": self.program.name,
@@ -525,8 +541,9 @@ observability:
             encoding="utf-8",
         )
 
-    def _prepare_prompt(self) -> None:
-        destination = self.rag_runtime / "config" / "system_prompt.md"
+    def _prepare_prompt(self, runtime: Path | None = None) -> None:
+        runtime = runtime or self.rag_runtime
+        destination = runtime / "config" / "system_prompt.md"
         source = self.platform.repositories.rag / "config" / "system_prompt.md"
         destination.parent.mkdir(parents=True, exist_ok=True)
         if source.is_file():
@@ -534,15 +551,23 @@ observability:
         elif not destination.exists():
             destination.write_text("Answer only from retrieved COBOL evidence and cite the supporting sources.\n", encoding="utf-8")
 
-    def _rag_environment(self, final_scripts: Path) -> dict[str, str]:
+    def _rag_environment(
+        self,
+        final_scripts: Path,
+        *,
+        runtime: Path | None = None,
+        collection: str | None = None,
+    ) -> dict[str, str]:
+        runtime = runtime or self.rag_runtime
+        collection = collection or self.collection
         env = os.environ.copy()
         source_root = str(self.platform.repositories.rag / "src")
         env["PYTHONPATH"] = source_root + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
         env.update(
             {
-                "COBOL_RAG_CHROMA_DIR": str(self.rag_runtime / ".chroma"),
-                "COBOL_RAG_INBOX_DIR": str(self.rag_runtime / "data" / "inbox"),
-                "COBOL_RAG_COLLECTION": self.collection,
+                "COBOL_RAG_CHROMA_DIR": str(runtime / ".chroma"),
+                "COBOL_RAG_INBOX_DIR": str(runtime / "data" / "inbox"),
+                "COBOL_RAG_COLLECTION": collection,
                 "COBOL_RAG_LLM_MODEL": self.platform.rag.llm_model,
                 "COBOL_RAG_LLM_BASE_URL": self.platform.rag.llm_base_url,
                 "COBOL_RAG_EMBEDDING_MODEL": self.platform.rag.embedding_model,
@@ -551,6 +576,86 @@ observability:
             }
         )
         return env
+
+    def _publish_program_artifacts(self, source: Path) -> None:
+        """Atomically publish one program into the shared final_scripts registry."""
+        if not source.is_dir():
+            raise PipelineError(f"Program final_scripts directory does not exist: {source}")
+        destination = self.corpus_final_scripts / self.program.name
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        temp = destination.parent / f".{self.program.name}.tmp-{uuid.uuid4().hex}"
+        shutil.copytree(source, temp)
+        if destination.parent.resolve() != self.corpus_final_scripts.resolve():
+            raise PipelineError(f"Refusing to publish outside corpus registry: {destination}")
+        if destination.exists():
+            shutil.rmtree(destination)
+        temp.replace(destination)
+        self._write_corpus_registry()
+
+    def _write_corpus_registry(self) -> None:
+        """Write the small routing catalogue used before any retrieval occurs."""
+        programs: list[dict[str, Any]] = []
+        if self.corpus_final_scripts.is_dir():
+            for program_root in sorted(path for path in self.corpus_final_scripts.iterdir() if path.is_dir()):
+                program = program_root.name.upper()
+                entities: dict[tuple[str, str], dict[str, str]] = {}
+
+                def add(entity_type: str, value: Any, entity_key: str | None = None) -> None:
+                    normalized = str(value or "").strip().upper()
+                    if not normalized:
+                        return
+                    key = entity_key or f"{program}|{entity_type.upper()}|{normalized}"
+                    entities[(entity_type, normalized)] = {
+                        "type": entity_type, "value": normalized, "entity_key": key,
+                    }
+
+                for path in program_root.rglob("dataflow.variable.*.json"):
+                    add("variable", path.name[len("dataflow.variable.") : -5])
+
+                call_path = next(iter(program_root.rglob("architecture.call_parameters.json")), None)
+                calls = self._read_json_file(call_path).get("calls", []) if call_path else []
+                for call in calls if isinstance(calls, list) else []:
+                    if not isinstance(call, dict):
+                        continue
+                    target = str(call.get("target", "")).upper()
+                    call_type = str(call.get("call_type", "CALL")).upper()
+                    add("call", target, f"{program}|{target}|{call_type}")
+
+                copybook_path = next(iter(program_root.rglob("architecture.copybooks.json")), None)
+                copybook_content = self._read_json_file(copybook_path).get("content", {}) if copybook_path else {}
+                for name in copybook_content.get("all", []) if isinstance(copybook_content, dict) else []:
+                    add("copybook", name)
+
+                cfg_path = next(iter(program_root.rglob("controlflow.cfg.json")), None)
+                nodes = self._read_json_file(cfg_path).get("nodes", []) if cfg_path else []
+                for node in nodes if isinstance(nodes, list) else []:
+                    add("paragraph", node.get("id") if isinstance(node, dict) else node)
+
+                programs.append({
+                    "program": program,
+                    "artifact_root": str(program_root),
+                    "entities": sorted(entities.values(), key=lambda item: (item["type"], item["value"])),
+                })
+
+        registry = {
+            "schema_version": 1,
+            "program_count": len(programs),
+            "programs": programs,
+        }
+        path = self.corpus_final_scripts / "corpus.registry.json"
+        temp = path.with_suffix(".tmp")
+        temp.write_text(json.dumps(registry, indent=2) + "\n", encoding="utf-8")
+        temp.replace(path)
+
+    @staticmethod
+    def _read_json_file(path: Path | None) -> dict[str, Any]:
+        if path is None or not path.is_file():
+            return {}
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            return payload if isinstance(payload, dict) else {}
+        except (OSError, json.JSONDecodeError):
+            return {}
 
     def _ensure_ollama_model(self, model: str) -> None:
         base_url = self.platform.rag.llm_base_url.rstrip("/")

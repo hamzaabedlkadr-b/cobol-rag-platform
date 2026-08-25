@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -37,6 +38,38 @@ class PlatformTests(unittest.TestCase):
             path.write_text("second", encoding="utf-8")
             after = fingerprint_paths([path])
         self.assertNotEqual(before, after)
+
+    def test_programs_publish_into_one_targetable_corpus_registry(self) -> None:
+        platform = load_platform(ROOT / "config" / "platform.toml")
+        program = load_program(ROOT / "programs" / "PDCBVC" / "program.toml", platform)
+        with tempfile.TemporaryDirectory() as temp:
+            temp_root = Path(temp)
+            source = temp_root / "generated" / "PDCBVC"
+            variable_dir = source / "dataflow.variable"
+            variable_dir.mkdir(parents=True)
+            (variable_dir / "dataflow.variable.TEST-FIELD.json").write_text("{}", encoding="utf-8")
+            (source / "architecture.call_parameters.json").write_text(
+                json.dumps({"calls": [{"target": "CALLED1", "call_type": "LINK"}]}),
+                encoding="utf-8",
+            )
+            (source / "architecture.copybooks.json").write_text(
+                json.dumps({"content": {"all": ["COPY1"]}}), encoding="utf-8",
+            )
+            (source / "controlflow.cfg.json").write_text(
+                json.dumps({"nodes": [{"id": "PARA-1"}]}), encoding="utf-8",
+            )
+
+            pipeline = Pipeline(platform, program, temp_root / "runs")
+            pipeline._publish_program_artifacts(source)
+
+            self.assertEqual(pipeline.collection, "cobol-corpus")
+            self.assertEqual(pipeline.legacy_collection, "cobol-pdcbvc")
+            registry = json.loads(
+                (pipeline.corpus_final_scripts / "corpus.registry.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(registry["program_count"], 1)
+            values = {item["value"] for item in registry["programs"][0]["entities"]}
+            self.assertTrue({"TEST-FIELD", "CALLED1", "COPY1", "PARA-1"}.issubset(values))
 
 
 if __name__ == "__main__":
