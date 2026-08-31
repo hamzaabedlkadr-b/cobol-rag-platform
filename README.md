@@ -38,6 +38,15 @@ The repositories and integration branches are:
 
 The platform invokes the team cobol-rekt analysis and chunk pipeline, then validates and exports its `knowledge-base_rag` bundle. The upstream project on which that fork is based is https://github.com/avishek-sen-gupta/cobol-rekt.
 
+## Setup and daily use
+
+New machine, or unsure what to run? **[SETUP.md](SETUP.md)** covers prerequisites,
+cloning, the run order, tests, and where every answer's evidence lives.
+
+Note that the model runs on **host Ollama**, not the `ollama` container: compose
+points at `host.docker.internal:11434` because Docker on macOS cannot reach the
+GPU. A new machine needs Ollama installed and two models pulled.
+
 ## One-command Docker run
 
 Copy the environment template if paths differ:
