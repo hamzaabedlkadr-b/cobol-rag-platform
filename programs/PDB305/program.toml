@@ -1,0 +1,6 @@
+[program]
+name = "PDB305"
+cobol_source = "input/PD305/PDB305.CBL"
+copybooks = "input/PD305/copybooks"
+mapa = "input/PD305/PDB305_result.txt"
+controlflow = "input/PD305/PDB305_controlflow.json"

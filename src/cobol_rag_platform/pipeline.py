@@ -647,6 +647,15 @@ observability:
                 for operation in cics_operations if isinstance(cics_operations, list) else []:
                     if not isinstance(operation, dict):
                         continue
+                    structured = operation.get("resources") or []
+                    for resource in structured if isinstance(structured, list) else []:
+                        if not isinstance(resource, dict):
+                            continue
+                        resource_type = str(resource.get("resource_type") or "").lower()
+                        if resource_type in {"map", "mapset", "queue"}:
+                            add(resource_type, resource.get("resource"))
+                    if structured:
+                        continue
                     statement = str(operation.get("statement", ""))
                     for entity_type, pattern in (("map", _MAP_NAME), ("mapset", _MAPSET_NAME)):
                         for match in pattern.finditer(statement):

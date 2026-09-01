@@ -1,6 +1,6 @@
 # Setup and daily use
 
-Three repositories run as one system. This file covers what to install on a new
+Four repositories run as one system. This file covers what to install on a new
 machine, what to run on a machine that is already set up, and where to look when
 you want to read the code or check a fact yourself.
 
@@ -52,14 +52,19 @@ Camera/
   control_flow/          analysis: COBOL -> artifacts
   cobol-rag-pipeline/    RAG: retrieval, answering, API and UI
   cobol-rag-platform/    orchestration: this repo, the one you run
-  cobol-rekt/            optional; a second analyzer
+  cobol-rekt/            second analyzer and RAG evidence exporter
 ```
 
 ```bash
 mkdir Camera && cd Camera
-git clone https://github.com/hamzaabedlkadr-b/legacy-program-analysis control_flow
-git clone https://github.com/erminlilaj/cobol-rag-pipeline
-git clone https://github.com/erminlilaj/cobol-rag-platform
+git clone --branch feature/program-capability-manifest \
+  https://github.com/hamzaabedlkadr-b/legacy-program-analysis.git control_flow
+git clone --branch feature/integration-research \
+  https://github.com/erminlilaj/cobol-rekt.git cobol-rekt
+git clone --branch feature/semantic-capability-routing \
+  https://github.com/erminlilaj/cobol-rag-pipeline.git cobol-rag-pipeline
+git clone --branch feature/map-entity-registry \
+  https://github.com/hamzaabedlkadr-b/cobol-rag-platform.git cobol-rag-platform
 ```
 
 If your folder layout differs, copy `.env.example` to `.env` and set
@@ -106,6 +111,11 @@ docker compose up -d rag-api
 ```
 
 Open **http://localhost:8000** and ask questions there.
+
+The API is intentionally bound to `127.0.0.1`. It has no authentication and is
+designed for local development, so do not expose port 8000 directly to the
+internet. Put an authenticated reverse proxy in front of it before any shared
+or remote deployment.
 
 ### After you change code
 

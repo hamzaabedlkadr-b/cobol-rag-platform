@@ -25,16 +25,17 @@ The default sibling layout is:
 ```text
 Camera/
   control_flow/             # legacy-program-analysis / MAPA-Hamza pipeline
-  cobol-rekt/               # optional until checked out
+  cobol-rekt/               # second analyzer and RAG evidence exporter
   cobol-rag-pipeline/       # Chroma + retrieval + answer API
   cobol-rag-platform/       # this repository
 ```
 
 The repositories and integration branches are:
 
-- Analysis: https://github.com/hamzaabedlkadr-b/legacy-program-analysis (`feature/combine-cobol-rekt-analysis`)
+- Analysis: https://github.com/hamzaabedlkadr-b/legacy-program-analysis (`feature/program-capability-manifest`)
 - cobol-rekt: https://github.com/erminlilaj/cobol-rekt (`feature/integration-research`)
-- RAG/UI: https://github.com/erminlilaj/cobol-rag-pipeline (`feature/combine-cobol-rekt-rag`)
+- RAG/UI: https://github.com/erminlilaj/cobol-rag-pipeline (`feature/semantic-capability-routing`)
+- Platform: https://github.com/hamzaabedlkadr-b/cobol-rag-platform (`feature/map-entity-registry`)
 
 The platform invokes the team cobol-rekt analysis and chunk pipeline, then validates and exports its `knowledge-base_rag` bundle. The upstream project on which that fork is based is https://github.com/avishek-sen-gupta/cobol-rekt.
 
@@ -74,6 +75,10 @@ docker compose up rag-api
 ```
 
 Open `http://localhost:8000`.
+
+The compose file binds the API to `127.0.0.1` because this development service
+has no authentication. Do not expose port 8000 directly to the internet; use an
+authenticated reverse proxy for any shared deployment.
 
 The first Docker build and first Ollama model pull are intentionally slower. Later runs hash their inputs and skip unchanged work.
 
@@ -178,3 +183,7 @@ docker compose exec \
 ```
 
 The API exposes answer traces at `/api/traces` and corrective feedback at `/api/feedback`.
+
+## License
+
+This project is released under the [MIT License](LICENSE).

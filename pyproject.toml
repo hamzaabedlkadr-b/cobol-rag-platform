@@ -7,6 +7,7 @@ name = "cobol-rag-platform"
 version = "0.1.0"
 description = "Thin orchestrator for COBOL analysis, cobol-rekt evidence, and RAG indexing."
 readme = "README.md"
+license = "MIT"
 requires-python = ">=3.11"
 dependencies = []
 
@@ -15,4 +16,3 @@ cobol-platform = "cobol_rag_platform.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
-

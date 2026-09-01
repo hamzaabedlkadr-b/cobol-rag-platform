@@ -62,6 +62,11 @@ class PlatformTests(unittest.TestCase):
                 json.dumps({"content": {"operations": [{
                     "command": "SEND", "paragraph": "SEND-SCREEN1",
                     "statement": "EXEC CICS SEND MAP('SCREEN1') MAPSET('SCRNSET') END-EXEC.",
+                    "resources": [
+                        {"resource_type": "MAP", "resource": "SCREEN1"},
+                        {"resource_type": "MAPSET", "resource": "SCRNSET"},
+                        {"resource_type": "QUEUE", "resource": "TS-QUEUE"},
+                    ],
                 }]}}),
                 encoding="utf-8",
             )
@@ -90,6 +95,7 @@ class PlatformTests(unittest.TestCase):
             # Distinct types: a mapset name is frequently also a COPY member, so
             # collapsing the two would collide with the copybook entity.
             self.assertIn(("mapset", "SCRNSET"), typed)
+            self.assertIn(("queue", "TS-QUEUE"), typed)
             self.assertNotIn(("map", "SCRNSET"), typed)
 
 
