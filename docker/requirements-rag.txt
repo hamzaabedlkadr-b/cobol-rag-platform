@@ -2,7 +2,7 @@ chromadb
 fastapi
 llama-index
 llama-index-embeddings-ollama
-llama-index-llms-ollama
+llama-index-llms-ollama>=0.9.1,<0.11
 llama-index-vector-stores-chroma
 pydantic-settings
 pyyaml

@@ -21,7 +21,8 @@ services:
       ollama:
         condition: service_healthy
     environment:
-      COBOL_RAG_LLM_MODEL: ${COBOL_RAG_LLM_MODEL:-granite-code:8b-instruct}
+      COBOL_RAG_LLM_MODEL: ${COBOL_RAG_LLM_MODEL:-granite4.2:8b}
+      COBOL_RAG_LLM_THINKING: ${COBOL_RAG_LLM_THINKING:-false}
       COBOL_RAG_EMBEDDING_MODEL: ${COBOL_RAG_EMBEDDING_MODEL:-mxbai-embed-large:latest}
       # Docker Desktop on macOS cannot pass through the Apple GPU, so inference in
       # the ollama container is CPU-only. Point at the host's native Ollama, which
@@ -58,7 +59,8 @@ services:
       ollama:
         condition: service_healthy
     environment:
-      COBOL_RAG_LLM_MODEL: ${COBOL_RAG_LLM_MODEL:-granite-code:8b-instruct}
+      COBOL_RAG_LLM_MODEL: ${COBOL_RAG_LLM_MODEL:-granite4.2:8b}
+      COBOL_RAG_LLM_THINKING: ${COBOL_RAG_LLM_THINKING:-false}
       COBOL_RAG_EMBEDDING_MODEL: ${COBOL_RAG_EMBEDDING_MODEL:-mxbai-embed-large:latest}
       # Docker Desktop on macOS cannot pass through the Apple GPU, so inference in
       # the ollama container is CPU-only. Point at the host's native Ollama, which

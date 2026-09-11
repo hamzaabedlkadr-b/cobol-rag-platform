@@ -30,11 +30,14 @@ slow. Ollama on the host uses Metal.
 So on a new machine you must install Ollama yourself and pull two models:
 
 ```bash
-ollama pull granite-code:8b-instruct
+ollama pull granite4.2:8b
 ollama pull mxbai-embed-large
 ```
 
-`granite-code:8b-instruct` is ~4.6 GB, `mxbai-embed-large` ~669 MB.
+`granite4.2:8b` is ~5.3 GB, `mxbai-embed-large` ~669 MB.
+Thinking is disabled for the RAG runtime because short routing calls require
+compact JSON/content responses; it can be enabled explicitly with
+`COBOL_RAG_LLM_THINKING=true` for experiments.
 
 To use the container's Ollama instead (Linux, or a machine with no host Ollama),
 set `COBOL_RAG_LLM_BASE_URL=http://ollama:11434` and the same for

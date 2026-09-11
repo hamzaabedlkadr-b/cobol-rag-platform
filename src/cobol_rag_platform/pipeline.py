@@ -298,6 +298,7 @@ class Pipeline:
                 "collection": self.collection,
                 "llm_model": self.platform.rag.llm_model,
                 "embedding_model": self.platform.rag.embedding_model,
+                "llm_thinking": self.platform.rag.llm_thinking,
             },
         )
         manifest = self.rag_runtime / "data" / "manifests" / f"{self.collection}.json"
@@ -505,6 +506,7 @@ llm:
   request_timeout: 300
   temperature: 0.1
   max_output_tokens: 256
+  thinking: {str(self.platform.rag.llm_thinking).lower()}
 
 embedding:
   provider: "ollama"
@@ -578,6 +580,7 @@ observability:
                 "COBOL_RAG_COLLECTION": collection,
                 "COBOL_RAG_LLM_MODEL": self.platform.rag.llm_model,
                 "COBOL_RAG_LLM_BASE_URL": self.platform.rag.llm_base_url,
+                "COBOL_RAG_LLM_THINKING": str(self.platform.rag.llm_thinking).lower(),
                 "COBOL_RAG_EMBEDDING_MODEL": self.platform.rag.embedding_model,
                 "COBOL_RAG_EMBEDDING_BASE_URL": self.platform.rag.embedding_base_url,
                 "COBOL_RAG_FINAL_SCRIPTS_DIR": str(final_scripts),

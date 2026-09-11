@@ -45,6 +45,7 @@ class RagSettings:
     llm_base_url: str
     embedding_base_url: str
     ensure_models: bool
+    llm_thinking: bool
 
 
 @dataclass(frozen=True)
@@ -111,7 +112,7 @@ def load_platform(path: Path) -> PlatformConfig:
         rag=RagSettings(
             python=os.getenv("RAG_PYTHON", str(rag.get("python", "python3"))),
             collection_prefix=str(rag.get("collection_prefix", "cobol")),
-            llm_model=os.getenv("COBOL_RAG_LLM_MODEL", str(rag.get("llm_model", "granite-code:8b-instruct"))),
+            llm_model=os.getenv("COBOL_RAG_LLM_MODEL", str(rag.get("llm_model", "granite4.2:8b"))),
             embedding_model=os.getenv(
                 "COBOL_RAG_EMBEDDING_MODEL",
                 str(rag.get("embedding_model", "mxbai-embed-large:latest")),
@@ -122,6 +123,7 @@ def load_platform(path: Path) -> PlatformConfig:
                 str(rag.get("embedding_base_url", "http://localhost:11434")),
             ),
             ensure_models=bool(rag.get("ensure_models", False)),
+            llm_thinking=_env_bool("COBOL_RAG_LLM_THINKING", bool(rag.get("llm_thinking", False))),
         ),
     )
 
@@ -175,3 +177,10 @@ def _resolve_path(raw: str, base: Path) -> Path:
     if not path.is_absolute():
         path = base / path
     return path.resolve()
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
