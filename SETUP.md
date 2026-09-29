@@ -1,5 +1,12 @@
 # Setup and daily use
 
+> For the current Gemma investigation testing checkpoint, follow
+> [TESTING_HANDOFF_2026-09-29.md](TESTING_HANDOFF_2026-09-29.md).
+> It supersedes the branch/model choices below: the current RAG and platform
+> branch is `wip/2026-09-15`, investigation must be enabled, and conversation
+> memory is disabled. The older Granite commands below are not the current
+> tested configuration.
+
 Four repositories run as one system. This file covers what to install on a new
 machine, what to run on a machine that is already set up, and where to look when
 you want to read the code or check a fact yourself.

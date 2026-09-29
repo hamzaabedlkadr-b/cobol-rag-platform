@@ -31,6 +31,7 @@ services:
       COBOL_RAG_EMBEDDING_BASE_URL: ${COBOL_RAG_EMBEDDING_BASE_URL:-http://host.docker.internal:11434}
       COBOL_RAG_CONSTRAINED_ROUTING: ${COBOL_RAG_CONSTRAINED_ROUTING:-0}
       COBOL_RAG_INVESTIGATION: ${COBOL_RAG_INVESTIGATION:-0}
+      COBOL_RAG_MEMORY_ENABLED: ${COBOL_RAG_MEMORY_ENABLED:-false}
     volumes:
       - type: bind
         source: ${ANALYSIS_REPO:-../control_flow}
@@ -70,6 +71,7 @@ services:
       COBOL_RAG_EMBEDDING_BASE_URL: ${COBOL_RAG_EMBEDDING_BASE_URL:-http://host.docker.internal:11434}
       COBOL_RAG_CONSTRAINED_ROUTING: ${COBOL_RAG_CONSTRAINED_ROUTING:-0}
       COBOL_RAG_INVESTIGATION: ${COBOL_RAG_INVESTIGATION:-0}
+      COBOL_RAG_MEMORY_ENABLED: ${COBOL_RAG_MEMORY_ENABLED:-false}
     ports:
       # The development API has no authentication. Keep it local by default.
       - "127.0.0.1:8000:8000"
