@@ -1,5 +1,72 @@
 # Setup and daily use
 
+## Assisted setup (macOS, Linux, Windows)
+
+Clone `cobol-rag-platform` first, then run its setup helper. It needs **Python
+3.9+ on the host** in addition to Git, Docker Compose and Ollama. Shell wrappers
+use `python3`; PowerShell wrappers use `py` or `python`. The actual analysis still
+runs inside Docker. Keep the four repositories as sibling directories; the helper
+clones missing siblings and fast-forwards clean checkouts to the branches in
+`scripts/rag_machine.py`. It stops on local Git changes or unexpected branches
+instead of overwriting them. Use `--skip-repo-update` when intentionally keeping
+an existing compatible checkout.
+
+Input layout (the folder names must match program names):
+
+```text
+my-programs/
+  PDCBVC/
+    PDCBVC.CBL
+    PDCBVC_result.txt
+    PDCBVC_controlflow.json
+  PDB305/
+    PDB305.CBL
+    PDB305_result.txt
+    PDB305_controlflow.json
+all-copybooks/
+  ...copybook files...
+```
+
+Each complete program gets the shared copybook tree copied into its own analysis
+input folder. Incomplete or empty program folders are **reported and skipped**;
+setup fails if no complete program remains. It cannot synthesize missing MAPA or
+control-flow files. Files are never silently overwritten: if an existing input
+or manifest differs, setup stops before importing and asks for `--replace-inputs`.
+Use that flag only when you intend to replace those specific imported files and
+rerun the affected programs. Existing `.runs` data is not deleted.
+
+```sh
+./setup.sh --programs-dir /absolute/path/my-programs --copybooks-dir /absolute/path/all-copybooks --dry-run
+./setup.sh --programs-dir /absolute/path/my-programs --copybooks-dir /absolute/path/all-copybooks
+./start_rag.sh
+```
+
+On Windows PowerShell:
+
+```powershell
+.\setup.ps1 --programs-dir 'D:\data\my-programs' --copybooks-dir 'D:\data\all-copybooks' --dry-run
+.\setup.ps1 --programs-dir 'D:\data\my-programs' --copybooks-dir 'D:\data\all-copybooks'
+.\start_rag.ps1
+```
+
+The default LLM tag is `gemma4:e4b-mlx` on Apple Silicon and `gemma4:e4b`
+elsewhere; the embedding model is `mxbai-embed-large:latest`. Override them
+with `--llm-model` and `--embedding-model`. For remote Ollama, pass
+`--ollama-url http://server:11434`; the helper pulls models on that server and
+writes the reachable URL into `.env`. If Docker needs a different URL than the
+host, also pass `--container-ollama-url`. `start_rag` reads the configured
+Ollama URL from `.env` unless overridden. On local Linux, Compose configures
+`host.docker.internal` using the Docker host gateway.
+
+Setup updates `.env`, builds images, runs `doctor` and `run` for every complete
+program, starts the API, and checks health, document count, and the program
+registry. This can take substantial time on a first run. The API/UI remains
+bound to `http://localhost:8000`; it has no authentication and should not be
+exposed directly to the internet. `start_rag` only recreates the API; it does
+not rebuild artifacts or pull repositories/models.
+
+---
+
 > For the current Gemma investigation testing checkpoint, follow
 > [TESTING_HANDOFF_2026-09-29.md](TESTING_HANDOFF_2026-09-29.md).
 > It supersedes the branch/model choices below: the current RAG and platform
