@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from cobol_rag_platform.config import PlatformConfig, ProgramConfig
+from cobol_rag_platform.reporting import RunReport, now
 
 
 STAGES = ("prepare", "rekt", "analysis", "models", "index")
@@ -84,19 +85,50 @@ class Pipeline:
         return self.rag_runtime / "final_scripts"
 
     def run(self, stop_after: str = "index") -> list[StageResult]:
+        if self.dry_run:
+            return self._run_stages(stop_after)
+        report = RunReport(self.run_dir / "reports", "program analysis", {
+            "program": self.program.name, "manifest": str(self.program.source),
+            "stop_after": stop_after, "force": self.force,
+            "llm_model": self.platform.rag.llm_model,
+            "embedding_model": self.platform.rag.embedding_model,
+        })
+        self._run_report = report
+        failure = None
+        try:
+            members = report.attempt(report.library, self.program.copybooks, "copybook") or {}
+            report.attempt(report.program, self.program.name, self.program.cobol_source,
+                           self.program.mapa, self.program.controlflow, members)
+            report.attempt(report.library, self.program.jcl, "jcl")
+            return self._run_stages(stop_after)
+        except BaseException as error:
+            failure = error
+            raise
+        finally:
+            report.attempt(report.collect_analysis, self.analysis_output)
+            report.finish("failed" if failure else "completed", failure)
+            self._run_report = None
+
+    def _run_stages(self, stop_after: str = "index") -> list[StageResult]:
         if stop_after not in STAGES:
             raise PipelineError(f"Unknown stop stage: {stop_after}")
         results: list[StageResult] = []
         for stage in STAGES:
+            started_at = now()
             method = getattr(self, f"stage_{stage}")
             print(f"\n== {stage} ==", flush=True)
             try:
                 result = method()
             except Exception as error:
+                if getattr(self, "_run_report", None):
+                    self._run_report.data["stages"].append(dict(name=stage, status="failed", started_at=started_at,
+                                                               finished_at=now(), error=str(error)))
                 if not self.dry_run:
                     self._record_failure(stage, error)
                 raise
             results.append(result)
+            if getattr(self, "_run_report", None):
+                self._run_report.data["stages"].append(dict(asdict(result), started_at=started_at, finished_at=now()))
             self._print_result(result)
             if stage == stop_after:
                 break
@@ -473,7 +505,10 @@ class Pipeline:
         if not cwd.is_dir():
             raise PipelineError(f"{label} working directory does not exist: {cwd}")
         try:
-            subprocess.run(command, cwd=cwd, env=env, check=True)
+            if getattr(self, "_run_report", None):
+                self._run_report.command(command, cwd=cwd, env=env)
+            else:
+                subprocess.run(command, cwd=cwd, env=env, check=True)
         except FileNotFoundError as error:
             raise PipelineError(f"{label} executable was not found: {command[0]}") from error
         except subprocess.CalledProcessError as error:

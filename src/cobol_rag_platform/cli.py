@@ -8,6 +8,7 @@ from pathlib import Path
 
 from cobol_rag_platform.config import ConfigurationError, load_platform, load_program
 from cobol_rag_platform.pipeline import Pipeline, PipelineError, STAGES
+from cobol_rag_platform.reporting import RunReport
 
 
 def parser() -> argparse.ArgumentParser:
@@ -54,6 +55,7 @@ def parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = parser().parse_args(argv)
+    run_started = False
     try:
         platform = load_platform(args.config)
         manifest = _program_manifest(args.programs_dir, args.program)
@@ -77,6 +79,7 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps(pipeline.status(), indent=2))
             return 0
         if args.command == "run":
+            run_started = True
             pipeline.run(stop_after=args.stop_after)
             print(f"\nRun directory: {pipeline.run_dir}")
             return 0
@@ -84,6 +87,11 @@ def main(argv: list[str] | None = None) -> int:
             pipeline.serve(args.host, args.port)
             return 0
     except (ConfigurationError, PipelineError, OSError, ValueError) as error:
+        if args.command == "run" and not run_started and not args.dry_run:
+            report = RunReport(args.runs_dir / "reports", "configuration failure", {
+                "program": args.program, "config": str(args.config), "programs_dir": str(args.programs_dir),
+            })
+            report.finish("failed", error)
         print(f"error: {error}", file=sys.stderr)
         return 1
     return 0
@@ -102,4 +110,3 @@ def _program_manifest(programs_dir: Path, program: str) -> Path:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

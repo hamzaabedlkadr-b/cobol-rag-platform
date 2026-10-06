@@ -76,6 +76,37 @@ After adding JCL or updating the analyzer, rerun `pipeline run PROGRAM` for
 each affected program, then restart `rag-api`; restarting the API alone does
 not regenerate the analysis or index.
 
+### Automatic input and run reports
+
+Every real `setup.sh` / `setup.ps1` run produces a timestamped report under
+`.runs/reports/<run-id>/`. `start_rag.sh` / `start_rag.ps1` produces a startup
+report in the same location (it does not reanalyze input files). Each
+`docker compose run --rm pipeline run PROGRAM` also writes its own report under
+`.runs/PROGRAM/reports/<run-id>/`. The terminal prints the exact report path.
+
+- `report.html`: standalone browser report (no internet connection required).
+- `report.md`: readable findings, input inventory, dependencies, stage outcomes,
+  command-log locations, and available analysis diagnostics.
+- `report.json`: the same structured information for later investigation.
+- `command-*.log`: stdout/stderr for executed commands, also streamed live.
+
+Reports are retained per run, including failed runs. Dry runs do not write them.
+The setup audit includes incomplete/empty program folders, missing expected
+files, ambiguous filenames, empty/unreadable files, invalid control-flow JSON
+(with recognition of the analyzer's supported DOT input),
+encoding warnings, PROGRAM-ID mismatches, and missing/ambiguous nested COPY
+references. Each input file has a size, modification timestamp and SHA-256 hash.
+JCL procedure/symbol warnings, reconciliation results and other diagnostics are
+included once the analyzer produces them; on-disk artifacts may be cached or
+from an earlier run, and their timestamps are shown explicitly.
+
+These are diagnostic checks, not a compiler: COPY scanning is best-effort,
+system libraries and SQL INCLUDE resolution are not verified, and a successful
+command does not imply complete or correct analysis. Existing pipeline error
+handling is preserved. Reports can contain internal paths, dataset names and
+tool output; review them before sharing. They remain local inside `.runs/` and
+are not committed to Git.
+
 The default LLM tag is `gemma4:e4b-mlx` on Apple Silicon and `gemma4:e4b`
 elsewhere; the embedding model is `mxbai-embed-large:latest`. Override them
 with `--llm-model` and `--embedding-model`. For remote Ollama, pass

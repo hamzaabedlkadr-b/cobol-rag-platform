@@ -23,6 +23,10 @@ from urllib.parse import urlparse
 
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "src"))
+from cobol_rag_platform.reporting import RunReport
+
+_ACTIVE_REPORT = None
 REPOSITORIES = {
     "control_flow": (
         "https://github.com/hamzaabedlkadr-b/legacy-program-analysis.git",
@@ -50,7 +54,10 @@ def say(message: str) -> None:
 def run(command: list[str], *, cwd: Path = ROOT, env: dict[str, str] | None = None, dry_run: bool = False) -> None:
     say("+ " + subprocess.list2cmdline(command))
     if not dry_run:
-        subprocess.run(command, cwd=cwd, env=env, check=True)
+        if _ACTIVE_REPORT is not None:
+            _ACTIVE_REPORT.command(command, cwd=cwd, env=env)
+        else:
+            subprocess.run(command, cwd=cwd, env=env, check=True)
 
 
 def require_tool(name: str) -> None:
@@ -94,6 +101,10 @@ def discover_programs(root: Path) -> tuple[list[ProgramInput], list[str]]:
             continue
         names.add(name)
         files = {p.name.upper(): p for p in folder.iterdir() if p.is_file()}
+        filenames = [p.name.upper() for p in folder.iterdir() if p.is_file()]
+        if len(filenames) != len(set(filenames)):
+            skipped.append(f"{folder.name}: ambiguous filenames (case-insensitive)")
+            continue
         expected = (f"{name}.CBL", f"{name}_RESULT.TXT", f"{name}_CONTROLFLOW.JSON")
         missing = [filename for filename in expected if filename not in files]
         if missing:
@@ -306,6 +317,8 @@ def wait_api(expected: set[str], *, timeout: int = 120) -> None:
             if not expected.issubset(indexed):
                 raise RuntimeError(f"Missing indexed programs: {', '.join(sorted(expected - indexed))}")
             say("Indexed programs: " + ", ".join(sorted(indexed)))
+            if _ACTIVE_REPORT is not None:
+                _ACTIVE_REPORT.data["metadata"].update(api_health=health, index_info=info, indexed_programs=sorted(indexed))
             return
         except (OSError, ValueError, RuntimeError, urllib.error.URLError) as error:
             last_error = error
@@ -325,6 +338,29 @@ def pull_models(url: str, models: tuple[str, str], *, dry_run: bool) -> None:
 
 
 def setup(args: argparse.Namespace) -> None:
+    global _ACTIVE_REPORT
+    if args.dry_run:
+        return _setup(args)
+    report = RunReport(ROOT / ".runs" / "reports", "setup", {
+        "programs_dir": str(args.programs_dir), "copybooks_dir": str(args.copybooks_dir),
+        "jcl_dir": str(args.jcl_dir) if args.jcl_dir else None,
+        "llm_model": args.llm_model, "embedding_model": args.embedding_model,
+    })
+    report.attempt(report.input_tree, args.programs_dir.resolve(), args.copybooks_dir.resolve(), args.jcl_dir)
+    previous, _ACTIVE_REPORT = _ACTIVE_REPORT, report
+    failure = None
+    try:
+        _setup(args)
+    except BaseException as error:
+        failure = error
+        raise
+    finally:
+        _ACTIVE_REPORT = previous
+        report.data["metadata"]["per_program_reports"] = str(ROOT / ".runs" / "PROGRAM" / "reports")
+        report.finish("failed" if failure else "completed", failure)
+
+
+def _setup(args: argparse.Namespace) -> None:
     programs, skipped = discover_programs(args.programs_dir.resolve())
     for reason in skipped:
         say("SKIP " + reason)
@@ -370,6 +406,24 @@ def setup(args: argparse.Namespace) -> None:
 
 
 def start(args: argparse.Namespace) -> None:
+    global _ACTIVE_REPORT
+    report = RunReport(ROOT / ".runs" / "reports", "start", {
+        "note": "Starts the existing corpus; does not reanalyze original inputs.",
+        "per_program_reports": str(ROOT / ".runs" / "PROGRAM" / "reports"),
+    })
+    previous, _ACTIVE_REPORT = _ACTIVE_REPORT, report
+    failure = None
+    try:
+        _start(args)
+    except BaseException as error:
+        failure = error
+        raise
+    finally:
+        _ACTIVE_REPORT = previous
+        report.finish("failed" if failure else "completed", failure)
+
+
+def _start(args: argparse.Namespace) -> None:
     check_docker()
     ollama_url = args.ollama_url
     if not ollama_url:
