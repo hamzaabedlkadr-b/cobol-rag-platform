@@ -49,6 +49,33 @@ On Windows PowerShell:
 .\start_rag.ps1
 ```
 
+To include JCL, add the optional `--jcl-dir` argument (also supported by
+`setup.ps1`):
+
+```sh
+./setup.sh --programs-dir /path/my-programs --copybooks-dir /path/all-copybooks --jcl-dir /path/jobs
+```
+
+The shared JCL folder may contain `.jcl` or `.txt` jobs and `.proc` or `.prc`
+procedure members in subfolders; filenames
+must be unique, ignoring case. Setup copies them into each complete program's
+`input/PROGRAM/jcl/` directory and adds `jcl` to its manifest. The analyzer
+resolves SET symbols, supplied PROC definitions and invocation overrides before
+matching EXEC programs. Include any referenced procedure members in the folder.
+Missing procedures, unresolved symbols and unsupported INCLUDE statements are
+reported as limitations; remote mainframe libraries are not fetched. IF/ELSE
+and COND predicates are preserved, not evaluated. DISP alone does not establish
+whether an application reads or writes a dataset.
+Only put JCL input text in this folder. An empty or missing JCL folder is reported
+as an error when explicitly supplied. Without `--jcl-dir`, existing JCL settings
+are preserved. Adding the setting to a compatible manifest preserves its other
+settings and comments; changing an existing JCL path requires `--replace-inputs`.
+Existing destination files absent from the supplied folder are retained.
+
+After adding JCL or updating the analyzer, rerun `pipeline run PROGRAM` for
+each affected program, then restart `rag-api`; restarting the API alone does
+not regenerate the analysis or index.
+
 The default LLM tag is `gemma4:e4b-mlx` on Apple Silicon and `gemma4:e4b`
 elsewhere; the embedding model is `mxbai-embed-large:latest`. Override them
 with `--llm-model` and `--embedding-model`. For remote Ollama, pass

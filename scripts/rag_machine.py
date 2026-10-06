@@ -169,7 +169,43 @@ def manifest_matches(existing: Path, expected: str) -> bool:
     return values(existing.read_text()) == values(expected)
 
 
-def install_inputs(programs: list[ProgramInput], copybooks: Path, *, replace: bool, dry_run: bool) -> None:
+def jcl_files_in(folder: Path) -> list[Path]:
+    if not folder.is_dir():
+        raise RuntimeError(f"JCL folder does not exist: {folder}")
+    files = sorted(p for p in folder.rglob("*") if p.is_file() and p.suffix.lower() in {".jcl", ".txt", ".proc", ".prc"})
+    if not files:
+        raise RuntimeError(f"No JCL/procedure files (.jcl, .txt, .proc, .prc) found in: {folder}")
+    names: set[str] = set()
+    for file in files:
+        if file.name.casefold() in names:
+            raise RuntimeError(f"Duplicate JCL filename in shared folder: {file.name}; use unique filenames")
+        names.add(file.name.casefold())
+    return files
+
+
+def add_jcl_setting(content: str, value: str, *, replace: bool) -> str:
+    # Change only the program table, retaining optional settings and comments.
+    section = re.search(r"(?m)^\[program\][^\n]*\n", content)
+    if not section:
+        raise RuntimeError("Cannot add JCL: manifest has no [program] table")
+    tail = content[section.end():]
+    next_section = re.search(r"(?m)^\s*\[", tail)
+    end = section.end() + (next_section.start() if next_section else len(tail))
+    body = content[section.end():end]
+    existing = re.search(r"(?m)^\s*jcl\s*=\s*(['\"])(.*?)\1[^\n]*", body)
+    if existing:
+        if existing.group(2) == value:
+            return content
+        if not replace:
+            raise RuntimeError("Manifest points to a different JCL folder; use --replace-inputs to replace it")
+        body = body[:existing.start()] + f'jcl = "{value}"' + body[existing.end():]
+    else:
+        body = body.rstrip("\n") + f'\njcl = "{value}"\n\n'
+    return content[:section.end()] + body + content[end:]
+
+
+def install_inputs(programs: list[ProgramInput], copybooks: Path, *, replace: bool, dry_run: bool,
+                   jcl_dir: Path | None = None) -> None:
     if not copybooks.is_dir():
         raise RuntimeError(f"Copybook folder does not exist: {copybooks}")
     copybook_files = sorted(p for p in copybooks.rglob("*") if p.is_file())
@@ -178,6 +214,8 @@ def install_inputs(programs: list[ProgramInput], copybooks: Path, *, replace: bo
     analysis = ROOT.parent / "control_flow" / "input"
     planned_files: list[tuple[Path, Path]] = []
     planned_manifests: list[tuple[str, Path]] = []
+    jcl_files = jcl_files_in(jcl_dir) if jcl_dir is not None else []
+    jcl_manifest_updates: set[Path] = set()
     for program in programs:
         target = analysis / program.name
         for source, filename in (
@@ -188,6 +226,10 @@ def install_inputs(programs: list[ProgramInput], copybooks: Path, *, replace: bo
             planned_files.append((source, target / filename))
         for source in copybook_files:
             planned_files.append((source, target / "copybooks" / source.relative_to(copybooks)))
+        # The analyzer scans this directory non-recursively. Flatten only after
+        # validating unique filenames so nested uploads cannot overwrite each other.
+        for source in jcl_files:
+            planned_files.append((source, target / "jcl" / source.name))
         manifest = (
             "[program]\n"
             f'name = "{program.name}"\n'
@@ -198,8 +240,17 @@ def install_inputs(programs: list[ProgramInput], copybooks: Path, *, replace: bo
         )
         manifest_path = ROOT / "programs" / program.name / "program.toml"
         if manifest_matches(manifest_path, manifest):
-            say(f"Keeping compatible manifest: {manifest_path}")
+            if jcl_dir is not None:
+                original = manifest_path.read_text()
+                updated = add_jcl_setting(original, f"input/{program.name}/jcl", replace=replace)
+                if updated != original:
+                    planned_manifests.append((updated, manifest_path))
+                    jcl_manifest_updates.add(manifest_path)
+            else:
+                say(f"Keeping compatible manifest: {manifest_path}")
         else:
+            if jcl_dir is not None:
+                manifest += f'jcl = "input/{program.name}/jcl"\n'
             planned_manifests.append((manifest, manifest_path))
     # Check every collision before copying anything, so a conflict does not leave
     # a partially imported program behind.
@@ -208,12 +259,12 @@ def install_inputs(programs: list[ProgramInput], copybooks: Path, *, replace: bo
             if target.exists() and sha256(source) != sha256(target):
                 raise RuntimeError(f"Different file already exists: {target}; use --replace-inputs to replace it")
         for content, target in planned_manifests:
-            if target.exists() and target.read_text() != content:
+            if target.exists() and target.read_text() != content and target not in jcl_manifest_updates:
                 raise RuntimeError(f"Different manifest already exists: {target}; use --replace-inputs to replace it")
     for source, target in planned_files:
         copy_checked(source, target, replace=replace, dry_run=dry_run)
     for content, target in planned_manifests:
-        write_checked(content, target, replace=replace, dry_run=dry_run)
+        write_checked(content, target, replace=replace or target in jcl_manifest_updates, dry_run=dry_run)
 
 
 def update_env(settings: dict[str, str], *, dry_run: bool) -> None:
@@ -281,6 +332,8 @@ def setup(args: argparse.Namespace) -> None:
         raise RuntimeError("No complete program folders found; nothing will be indexed")
     if not args.copybooks_dir.is_dir() or not any(p.is_file() for p in args.copybooks_dir.rglob("*")):
         raise RuntimeError(f"Copybook folder is missing or empty: {args.copybooks_dir}")
+    if args.jcl_dir is not None:
+        say(f"JCL files available: {len(jcl_files_in(args.jcl_dir))}")
     say("Programs to index: " + ", ".join(item.name for item in programs))
     if not args.dry_run:
         check_docker()
@@ -289,7 +342,8 @@ def setup(args: argparse.Namespace) -> None:
         pull_models(args.ollama_url, (args.llm_model, args.embedding_model), dry_run=args.dry_run)
     else:
         say("Model pull skipped; ensure both models exist on the configured Ollama server")
-    install_inputs(programs, args.copybooks_dir.resolve(), replace=args.replace_inputs, dry_run=args.dry_run)
+    install_inputs(programs, args.copybooks_dir.resolve(), replace=args.replace_inputs, dry_run=args.dry_run,
+                   jcl_dir=args.jcl_dir.resolve() if args.jcl_dir is not None else None)
     container_url = args.container_ollama_url or (
         "http://host.docker.internal:11434" if urlparse(args.ollama_url).hostname in {"localhost", "127.0.0.1"}
         else args.ollama_url
@@ -340,6 +394,7 @@ def main() -> int:
     install = sub.add_parser("setup", help="Import complete program bundles and build the corpus")
     install.add_argument("--programs-dir", type=Path, required=True, help="Parent containing one folder per program")
     install.add_argument("--copybooks-dir", type=Path, required=True, help="Shared copybook tree")
+    install.add_argument("--jcl-dir", type=Path, help="Optional shared folder of .jcl/.txt jobs and .proc/.prc procedure members (unique filenames)")
     install.add_argument("--llm-model", default=model_default())
     install.add_argument("--embedding-model", default="mxbai-embed-large:latest")
     install.add_argument("--ollama-url", default="http://localhost:11434", help="URL reachable from host")

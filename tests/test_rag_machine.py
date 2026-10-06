@@ -53,6 +53,55 @@ class MachineSetupTests(unittest.TestCase):
             self.assertIn("CUSTOM_SETTING=keep", contents)
             self.assertIn("COBOL_RAG_LLM_MODEL=new", contents)
 
+    def test_optional_jcl_import_and_existing_manifest_preservation(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            platform_root = root / "platform"
+            source = root / "inputs"
+            source.mkdir()
+            files = [source / name for name in ("A.CBL", "A_result.txt", "A_controlflow.json")]
+            for file in files:
+                file.write_text("input")
+            copybooks = root / "copybooks"
+            copybooks.mkdir()
+            (copybooks / "X.CPY").write_text("copybook")
+            jobs = root / "jobs"
+            (jobs / "nested").mkdir(parents=True)
+            (jobs / "nested" / "JOB.JCL").write_text("//STEP EXEC PGM=A\n")
+            program = rag_machine.ProgramInput("A", *files)
+            with patch.object(rag_machine, "ROOT", platform_root):
+                rag_machine.install_inputs([program], copybooks, replace=False, dry_run=False)
+                manifest = platform_root / "programs" / "A" / "program.toml"
+                self.assertNotIn("jcl =", manifest.read_text())
+                original = manifest.read_text() + '# retain this comment\nrekt_bundle = "bundle"\n'
+                manifest.write_text(original)
+                rag_machine.install_inputs([program], copybooks, replace=False, dry_run=True, jcl_dir=jobs)
+                self.assertEqual(manifest.read_text(), original)
+                self.assertFalse((root / "control_flow/input/A/jcl").exists())
+                rag_machine.install_inputs([program], copybooks, replace=False, dry_run=False, jcl_dir=jobs)
+                updated = manifest.read_text()
+                self.assertIn('jcl = "input/A/jcl"', updated)
+                self.assertIn('# retain this comment\nrekt_bundle = "bundle"', updated)
+                self.assertEqual((root / "control_flow/input/A/jcl/JOB.JCL").read_text(), "//STEP EXEC PGM=A\n")
+                rag_machine.install_inputs([program], copybooks, replace=False, dry_run=False)
+                self.assertEqual(manifest.read_text(), updated)
+
+    def test_jcl_validation_and_path_conflicts(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            with self.assertRaisesRegex(RuntimeError, "No JCL/procedure files"):
+                rag_machine.jcl_files_in(root)
+            (root / "JOB.JCL").write_text("job")
+            (root / "nested").mkdir()
+            (root / "nested/job.jcl").write_text("different job")
+            with self.assertRaisesRegex(RuntimeError, "Duplicate JCL"):
+                rag_machine.jcl_files_in(root)
+        content = '[program]\nname = "A"\njcl = "custom/jobs"\n[other]\nvalue = 1\n'
+        with self.assertRaisesRegex(RuntimeError, "different JCL"):
+            rag_machine.add_jcl_setting(content, "input/A/jcl", replace=False)
+        updated = rag_machine.add_jcl_setting(content, "input/A/jcl", replace=True)
+        self.assertIn('jcl = "input/A/jcl"\n[other]\nvalue = 1', updated)
+
 
 if __name__ == "__main__":
     unittest.main()
