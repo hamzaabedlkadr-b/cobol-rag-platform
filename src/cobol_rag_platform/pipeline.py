@@ -199,6 +199,8 @@ class Pipeline:
         exists("copybooks", self.program.copybooks, "directory")
         exists("MAPA result", self.program.mapa, "file")
         exists("control-flow", self.program.controlflow, "file")
+        if self.program.jcl is not None:
+            exists("JCL", self.program.jcl, "directory")
         if sys.version_info < (3, 11):
             checks.append(("error", "Python", "Python 3.11 or newer is required"))
         else:

@@ -229,6 +229,15 @@ def install_inputs(programs: list[ProgramInput], copybooks: Path, *, replace: bo
     jcl_manifest_updates: set[Path] = set()
     for program in programs:
         target = analysis / program.name
+        program_jcl = program.source.parent / "jcl"
+        if jcl_dir is not None and program_jcl.is_dir():
+            raise RuntimeError(
+                f"Both shared and program-specific JCL were supplied for {program.name}; choose one source"
+            )
+        selected_jcl = jcl_dir if jcl_dir is not None else (program_jcl if program_jcl.is_dir() else None)
+        selected_jcl_files = jcl_files if jcl_dir is not None else (
+            jcl_files_in(selected_jcl) if selected_jcl is not None else []
+        )
         for source, filename in (
             (program.source, f"{program.name}.CBL"),
             (program.mapa, f"{program.name}_result.txt"),
@@ -239,7 +248,7 @@ def install_inputs(programs: list[ProgramInput], copybooks: Path, *, replace: bo
             planned_files.append((source, target / "copybooks" / source.relative_to(copybooks)))
         # The analyzer scans this directory non-recursively. Flatten only after
         # validating unique filenames so nested uploads cannot overwrite each other.
-        for source in jcl_files:
+        for source in selected_jcl_files:
             planned_files.append((source, target / "jcl" / source.name))
         manifest = (
             "[program]\n"
@@ -251,7 +260,7 @@ def install_inputs(programs: list[ProgramInput], copybooks: Path, *, replace: bo
         )
         manifest_path = ROOT / "programs" / program.name / "program.toml"
         if manifest_matches(manifest_path, manifest):
-            if jcl_dir is not None:
+            if selected_jcl is not None:
                 original = manifest_path.read_text()
                 updated = add_jcl_setting(original, f"input/{program.name}/jcl", replace=replace)
                 if updated != original:
@@ -260,7 +269,7 @@ def install_inputs(programs: list[ProgramInput], copybooks: Path, *, replace: bo
             else:
                 say(f"Keeping compatible manifest: {manifest_path}")
         else:
-            if jcl_dir is not None:
+            if selected_jcl is not None:
                 manifest += f'jcl = "input/{program.name}/jcl"\n'
             planned_manifests.append((manifest, manifest_path))
     # Check every collision before copying anything, so a conflict does not leave

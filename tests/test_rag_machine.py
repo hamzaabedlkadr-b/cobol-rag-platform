@@ -102,6 +102,35 @@ class MachineSetupTests(unittest.TestCase):
         updated = rag_machine.add_jcl_setting(content, "input/A/jcl", replace=True)
         self.assertIn('jcl = "input/A/jcl"\n[other]\nvalue = 1', updated)
 
+    def test_program_local_jcl_is_imported_only_for_its_program(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            platform_root = root / "platform"
+            programs = []
+            for name in ("A", "B"):
+                source_dir = root / "inputs" / name
+                source_dir.mkdir(parents=True)
+                files = [source_dir / filename for filename in (
+                    f"{name}.CBL", f"{name}_result.txt", f"{name}_controlflow.json"
+                )]
+                for file in files:
+                    file.write_text("input")
+                programs.append(rag_machine.ProgramInput(name, *files))
+            jobs = root / "inputs" / "A" / "jcl"
+            jobs.mkdir()
+            (jobs / "JOB.JCL").write_text("//STEP EXEC PGM=A\n")
+            copybooks = root / "copybooks"
+            copybooks.mkdir()
+            (copybooks / "X.CPY").write_text("copybook")
+            with patch.object(rag_machine, "ROOT", platform_root):
+                rag_machine.install_inputs(programs, copybooks, replace=False, dry_run=False)
+            self.assertEqual((root / "control_flow/input/A/jcl/JOB.JCL").read_text(),
+                             "//STEP EXEC PGM=A\n")
+            self.assertFalse((root / "control_flow/input/B/jcl").exists())
+            self.assertIn('jcl = "input/A/jcl"',
+                          (platform_root / "programs/A/program.toml").read_text())
+            self.assertNotIn('jcl =', (platform_root / "programs/B/program.toml").read_text())
+
 
 if __name__ == "__main__":
     unittest.main()

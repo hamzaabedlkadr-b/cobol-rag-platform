@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 
 from cobol_rag_platform.config import load_platform, load_program
@@ -13,6 +14,14 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class PlatformTests(unittest.TestCase):
+    def test_doctor_rejects_missing_configured_jcl(self) -> None:
+        platform = load_platform(ROOT / "config" / "platform.toml")
+        program = load_program(ROOT / "programs" / "PDCBVC" / "program.toml", platform)
+        with tempfile.TemporaryDirectory() as temp:
+            missing = Path(temp) / "jcl"
+            checks = Pipeline(platform, replace(program, jcl=missing), Path(temp) / "runs").doctor()
+        self.assertIn(("error", "JCL", str(missing)), checks)
+
     def test_pdcbvc_manifest_resolves_real_inputs(self) -> None:
         platform = load_platform(ROOT / "config" / "platform.toml")
         program = load_program(ROOT / "programs" / "PDCBVC" / "program.toml", platform)
