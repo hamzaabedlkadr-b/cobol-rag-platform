@@ -1,12 +1,78 @@
 import tempfile
+import subprocess
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from scripts import rag_machine
 
 
 class MachineSetupTests(unittest.TestCase):
+    def test_setup_continues_after_individual_program_failures(self):
+        programs = [rag_machine.ProgramInput(name, Path(name), Path(name), Path(name))
+                    for name in ("GOOD1", "BAD1", "BAD2", "GOOD2")]
+        calls = []
+
+        def run(command, *, dry_run):
+            action, name = command[-2:]
+            calls.append((action, name))
+            if (action, name) in {("doctor", "BAD1"), ("run", "BAD2")}:
+                raise subprocess.CalledProcessError(1, command)
+
+        with patch.object(rag_machine, "run", side_effect=run):
+            succeeded, failed = rag_machine.process_programs(programs, dry_run=False)
+
+        self.assertEqual(succeeded, ["GOOD1", "GOOD2"])
+        self.assertEqual([(row["program"], row["stage"]) for row in failed],
+                         [("BAD1", "doctor"), ("BAD2", "run")])
+        self.assertEqual(calls, [("doctor", "GOOD1"), ("run", "GOOD1"),
+                                 ("doctor", "BAD1"), ("doctor", "BAD2"),
+                                 ("run", "BAD2"), ("doctor", "GOOD2"), ("run", "GOOD2")])
+
+    def test_setup_starts_api_and_waits_for_successful_subset(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            inputs = root / "inputs"
+            inputs.mkdir()
+            copybooks = root / "copybooks"
+            copybooks.mkdir()
+            (copybooks / "X.CPY").write_text("copybook")
+            programs = [rag_machine.ProgramInput(name, root / name, root / name, root / name)
+                        for name in ("GOOD1", "BAD", "GOOD2")]
+            args = SimpleNamespace(programs_dir=inputs, copybooks_dir=copybooks, jcl_dir=None,
+                                   dry_run=False, skip_repo_update=True, skip_model_pull=True,
+                                   ollama_url="http://localhost:11434", container_ollama_url=None,
+                                   llm_model="test-llm", embedding_model="test-embedding",
+                                   replace_inputs=True)
+            commands = []
+
+            def run(command, *, dry_run):
+                commands.append(command)
+                if command[-2:] == ["run", "BAD"]:
+                    raise subprocess.CalledProcessError(1, command)
+
+            with patch.object(rag_machine, "ROOT", root), \
+                 patch.object(rag_machine, "discover_programs", return_value=(programs, [])), \
+                 patch.object(rag_machine, "check_docker"), \
+                 patch.object(rag_machine, "ensure_repositories"), \
+                 patch.object(rag_machine, "install_inputs"), \
+                 patch.object(rag_machine, "update_env"), \
+                 patch.object(rag_machine, "run", side_effect=run), \
+                 patch.object(rag_machine, "wait_api") as wait_api:
+                rag_machine._setup(args)
+
+            self.assertIn(["docker", "compose", "up", "-d", "--no-deps", "--force-recreate", "rag-api"], commands)
+            wait_api.assert_called_once_with({"GOOD1", "GOOD2"})
+
+    def test_failed_program_does_not_count_as_success(self):
+        programs = [rag_machine.ProgramInput("BAD", Path("BAD"), Path("BAD"), Path("BAD"))]
+        with patch.object(rag_machine, "run", side_effect=subprocess.CalledProcessError(1, ["docker"])) as run:
+            succeeded, failed = rag_machine.process_programs(programs, dry_run=False)
+        self.assertEqual(succeeded, [])
+        self.assertEqual(len(failed), 1)
+        self.assertEqual(run.call_count, 1)
+
     def test_discovery_skips_incomplete_programs(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

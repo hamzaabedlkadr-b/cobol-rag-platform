@@ -366,7 +366,28 @@ def setup(args: argparse.Namespace) -> None:
     finally:
         _ACTIVE_REPORT = previous
         report.data["metadata"]["per_program_reports"] = str(ROOT / ".runs" / "PROGRAM" / "reports")
-        report.finish("failed" if failure else "completed", failure)
+        partial = bool(report.data["metadata"].get("failed_programs"))
+        report.finish("failed" if failure else "partial" if partial else "completed", failure)
+
+
+def process_programs(programs: list[ProgramInput], *, dry_run: bool) -> tuple[list[str], list[dict[str, str]]]:
+    """Keep independent program failures from stopping the rest of the corpus build."""
+    succeeded: list[str] = []
+    failed: list[dict[str, str]] = []
+    for program in programs:
+        for action in ("doctor", "run"):
+            try:
+                run(["docker", "compose", "run", "--rm", "pipeline", action, program.name], dry_run=dry_run)
+            except subprocess.CalledProcessError as error:
+                failure = {"program": program.name, "stage": action, "error": str(error)}
+                failed.append(failure)
+                say(f"SKIP {program.name}: {action} failed: {error}")
+                if _ACTIVE_REPORT is not None:
+                    _ACTIVE_REPORT.issue("error", program.name, f"{action} failed; see command log: {error}")
+                break
+        else:
+            succeeded.append(program.name)
+    return succeeded, failed
 
 
 def _setup(args: argparse.Namespace) -> None:
@@ -405,12 +426,17 @@ def _setup(args: argparse.Namespace) -> None:
         "COBOL_RAG_MEMORY_ENABLED": "false",
     }, dry_run=args.dry_run)
     run(["docker", "compose", "build", "pipeline", "rag-api"], dry_run=args.dry_run)
-    for program in programs:
-        for action in ("doctor", "run"):
-            run(["docker", "compose", "run", "--rm", "pipeline", action, program.name], dry_run=args.dry_run)
+    succeeded, failed = process_programs(programs, dry_run=args.dry_run)
+    if _ACTIVE_REPORT is not None:
+        _ACTIVE_REPORT.data["metadata"].update(succeeded_programs=succeeded, failed_programs=failed)
+    say("Successfully processed: " + (", ".join(succeeded) or "none"))
+    for failure in failed:
+        say(f"FAILED {failure['program']} at {failure['stage']}: {failure['error']}")
+    if not succeeded:
+        raise RuntimeError("No programs completed successfully; API was not started")
     run(["docker", "compose", "up", "-d", "--no-deps", "--force-recreate", "rag-api"], dry_run=args.dry_run)
     if not args.dry_run:
-        wait_api({item.name for item in programs})
+        wait_api(set(succeeded))
     say("Open http://localhost:8000")
 
 
