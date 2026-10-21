@@ -123,6 +123,29 @@ bound to `http://localhost:8000`; it has no authentication and should not be
 exposed directly to the internet. `start_rag` only recreates the API; it does
 not rebuild artifacts or pull repositories/models.
 
+### Switch between standard and large-model investigation
+
+After the four repositories and corpus are set up, use one command from the
+`cobol-rag-platform` directory to select the RAG code and restart the API:
+
+```sh
+./start_rag.sh --rag-mode large
+./start_rag.sh --rag-mode standard
+```
+
+The first command selects the experimental
+`feature/large-model-investigation` branch; the second returns to the tested
+`wip/2026-09-15` branch. Each fetches and fast-forwards the selected RAG branch,
+sets the matching investigation profile in `.env`, recreates `rag-api`, and
+checks health. It keeps the existing index, analyzed inputs, and configured
+Ollama model. The large profile allows more bounded source and evidence per
+investigation, a larger context and tool budget, and more self-directed
+multi-artifact analysis; evidence validation still applies. It may use more
+time and model tokens. Neither command reruns the analyzers or reindexes data.
+If the RAG checkout has tracked local changes, switching stops rather than
+overwriting them. On an existing machine, first update `cobol-rag-platform`
+once to obtain the new `--rag-mode` option.
+
 ---
 
 > For the current Gemma investigation testing checkpoint, follow

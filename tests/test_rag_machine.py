@@ -9,6 +9,41 @@ from scripts import rag_machine
 
 
 class MachineSetupTests(unittest.TestCase):
+    def test_switch_rag_mode_fetches_requested_branch_without_resetting(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / "cobol-rag-platform"
+            root.mkdir()
+            (root.parent / "cobol-rag-pipeline").mkdir()
+            commands = []
+            with patch.object(rag_machine, "ROOT", root), \
+                 patch.object(rag_machine, "require_tool"), \
+                 patch.object(rag_machine.subprocess, "check_output", return_value=""), \
+                 patch.object(rag_machine.subprocess, "run", return_value=SimpleNamespace(returncode=1)), \
+                 patch.object(rag_machine, "run", side_effect=lambda command, **kw: commands.append(command)):
+                rag_machine.switch_rag_mode("large")
+            branch = "feature/large-model-investigation"
+            self.assertEqual(commands, [
+                ["git", "fetch", "origin", branch],
+                ["git", "switch", "--track", "-c", branch, f"origin/{branch}"],
+                ["git", "merge", "--ff-only", f"origin/{branch}"],
+            ])
+
+    def test_start_mode_changes_only_branch_and_profile_before_recreate(self):
+        events = []
+        args = SimpleNamespace(ollama_url="http://localhost:11434", rag_mode="large")
+        with patch.object(rag_machine, "check_docker"), \
+             patch.object(rag_machine, "read_json", return_value={"version": "test"}), \
+             patch.object(rag_machine, "switch_rag_mode", side_effect=lambda mode: events.append(("switch", mode))), \
+             patch.object(rag_machine, "update_env", side_effect=lambda values, **kw: events.append(("env", values))), \
+             patch.object(rag_machine, "run", side_effect=lambda command, **kw: events.append(("run", command))), \
+             patch.object(rag_machine, "wait_api", side_effect=lambda *a, **kw: events.append(("wait", kw))):
+            rag_machine._start(args)
+        self.assertEqual(events[0], ("switch", "large"))
+        self.assertEqual(events[1], ("env", {"COBOL_RAG_INVESTIGATION_PROFILE": "large",
+                                             "COBOL_RAG_INVESTIGATION": "1"}))
+        self.assertEqual(events[2][1][-1], "rag-api")
+        self.assertEqual(events[3], ("wait", {"expected_profile": "large"}))
+
     def test_setup_continues_after_individual_program_failures(self):
         programs = [rag_machine.ProgramInput(name, Path(name), Path(name), Path(name))
                     for name in ("GOOD1", "BAD1", "BAD2", "GOOD2")]

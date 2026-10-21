@@ -36,6 +36,10 @@ REPOSITORIES = {
     "cobol-rag-pipeline": ("https://github.com/erminlilaj/cobol-rag-pipeline.git", "wip/2026-09-15"),
     "cobol-rag-platform": ("https://github.com/hamzaabedlkadr-b/cobol-rag-platform.git", "wip/2026-09-15"),
 }
+RAG_MODE_BRANCHES = {
+    "standard": REPOSITORIES["cobol-rag-pipeline"][1],
+    "large": "feature/large-model-investigation",
+}
 SUBMODULES = ("che-che4z-lsp-for-cobol-integration", "mojo-common", "woof")
 
 
@@ -307,7 +311,7 @@ def update_env(settings: dict[str, str], *, dry_run: bool) -> None:
         path.write_text("\n".join(result) + "\n")
 
 
-def wait_api(expected: set[str], *, timeout: int = 120) -> None:
+def wait_api(expected: set[str], *, timeout: int = 120, expected_profile: str | None = None) -> None:
     deadline = time.monotonic() + timeout
     last_error: Exception | None = None
     while time.monotonic() < deadline:
@@ -315,6 +319,8 @@ def wait_api(expected: set[str], *, timeout: int = 120) -> None:
             health = read_json("http://localhost:8000/api/health", timeout=5)
             if health.get("status") != "ok":
                 raise RuntimeError(f"Unexpected health response: {health}")
+            if expected_profile == "large" and health.get("investigation_profile") != "large":
+                raise RuntimeError(f"Large-model investigation profile is not active: {health}")
             info = read_json("http://localhost:8000/api/index-info", timeout=15)
             if not isinstance(info.get("documents"), int) or info["documents"] <= 0:
                 raise RuntimeError("Index has no documents")
@@ -472,9 +478,34 @@ def _start(args: argparse.Namespace) -> None:
         read_json(health_url)
     except (OSError, urllib.error.URLError) as error:
         raise RuntimeError(f"Ollama is not reachable at {health_url}: {error}") from error
+    if args.rag_mode:
+        switch_rag_mode(args.rag_mode)
+        update_env({"COBOL_RAG_INVESTIGATION_PROFILE": args.rag_mode,
+                    "COBOL_RAG_INVESTIGATION": "1"}, dry_run=False)
     run(["docker", "compose", "up", "-d", "--no-deps", "--force-recreate", "rag-api"])
-    wait_api(set())
+    wait_api(set(), expected_profile=args.rag_mode)
     say("Open http://localhost:8000")
+
+
+def switch_rag_mode(mode: str) -> None:
+    """Fast-forward the selected RAG branch without touching the corpus."""
+    branch = RAG_MODE_BRANCHES[mode]
+    repo = ROOT.parent / "cobol-rag-pipeline"
+    if not repo.is_dir():
+        raise RuntimeError(f"RAG checkout does not exist: {repo}")
+    require_tool("git")
+    status = subprocess.check_output(
+        ["git", "status", "--porcelain", "--untracked-files=no"], cwd=repo, text=True)
+    if status.strip():
+        raise RuntimeError(f"RAG checkout has local tracked changes; preserve them before switching: {repo}")
+    run(["git", "fetch", "origin", branch], cwd=repo)
+    local = subprocess.run(["git", "show-ref", "--verify", "--quiet", f"refs/heads/{branch}"], cwd=repo)
+    if local.returncode == 0:
+        run(["git", "switch", branch], cwd=repo)
+    else:
+        run(["git", "switch", "--track", "-c", branch, f"origin/{branch}"], cwd=repo)
+    run(["git", "merge", "--ff-only", f"origin/{branch}"], cwd=repo)
+    say(f"RAG mode: {mode} ({branch})")
 
 
 def main() -> int:
@@ -494,6 +525,8 @@ def main() -> int:
     install.add_argument("--dry-run", action="store_true")
     launch = sub.add_parser("start", help="Recreate the API without rebuilding the corpus")
     launch.add_argument("--ollama-url", help="Host-reachable Ollama URL; defaults to value inferred from .env")
+    launch.add_argument("--rag-mode", choices=tuple(RAG_MODE_BRANCHES),
+                        help="Fetch and switch the RAG branch, then start it against the existing index")
     args = parser.parse_args()
     try:
         if args.command == "setup":
