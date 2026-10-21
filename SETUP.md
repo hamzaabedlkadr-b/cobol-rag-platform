@@ -120,8 +120,8 @@ Setup updates `.env`, builds images, runs `doctor` and `run` for every complete
 program, starts the API, and checks health, document count, and the program
 registry. This can take substantial time on a first run. The API/UI remains
 bound to `http://localhost:8000`; it has no authentication and should not be
-exposed directly to the internet. `start_rag` only recreates the API; it does
-not rebuild artifacts or pull repositories/models.
+exposed directly to the internet. Without `--rag-mode`, `start_rag` only
+recreates the API; it does not rebuild artifacts or pull repositories/models.
 
 ### Switch between standard and large-model investigation
 
