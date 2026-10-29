@@ -35,6 +35,33 @@ or manifest differs, setup stops before importing and asks for `--replace-inputs
 Use that flag only when you intend to replace those specific imported files and
 rerun the affected programs. Existing `.runs` data is not deleted.
 
+For a second, heterogeneous source collection, add `--supplemental-dir`. Setup
+recursively inventories its `.CBL`/`.COB` files, compares same-name source by
+SHA-256, and locates one `jcl-main` or `jcl` library automatically. The organized
+program folder remains authoritative: a different supplemental copy is reported
+but never silently substituted. A new supplemental program is analyzed only
+when its source, matching `_result.txt`, and `_controlflow.json` are together in
+one directory. Other COBOL files are reported as missing analysis inputs. If
+several JCL folders exist, select one explicitly with `--jcl-dir`.
+
+Run the input audit first; it writes readable HTML/Markdown and structured JSON
+under `.runs/reports/` without importing files, rebuilding, or starting Docker:
+
+```sh
+./setup.sh --programs-dir /path/files_organized --copybooks-dir /path/copybooks \
+  --supplemental-dir /path/ted --preflight-only
+```
+
+After reviewing the report, rerun without `--preflight-only` to analyze and
+index the complete programs. JCL from the selected library and any compatible
+program-specific JCL is supplied to the analyzer. Duplicate JCL basenames with
+different contents are rejected. JCL `EXEC PGM`/resolved procedure evidence can
+link jobs and steps to programs; merely sharing the JCL library does not prove
+that every program runs in every job. Dataset access marked uncertain remains
+uncertain in answers. This import does not yet ingest CICS transaction resource
+definitions from the supplemental tree, and category folder names alone do not
+prove a program's execution mode.
+
 ```sh
 ./setup.sh --programs-dir /absolute/path/my-programs --copybooks-dir /absolute/path/all-copybooks --dry-run
 ./setup.sh --programs-dir /absolute/path/my-programs --copybooks-dir /absolute/path/all-copybooks

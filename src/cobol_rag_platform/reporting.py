@@ -34,7 +34,7 @@ class RunReport:
         self.directory = Path(directory) / run_id
         self.data = dict(schema_version=1, run_id=run_id, kind=kind, started_at=now(),
                          status="running", metadata=metadata or {}, files=[], findings=[],
-                         dependencies=[], stages=[], artifacts=[], commands=[])
+                         dependencies=[], stages=[], artifacts=[], commands=[], supplemental=None)
 
     def issue(self, severity, subject, detail):
         self.data["findings"].append(dict(severity=severity, subject=str(subject), detail=str(detail)))
@@ -255,6 +255,15 @@ class RunReport:
             lines.append(f"- **{item['severity'].upper()}** — `{item['subject']}`: {item['detail']}")
         if not data["findings"]:
             lines.append("No issues detected by the available checks; this is not proof of complete analysis.")
+        supplemental = data.get("supplemental") or {}
+        if supplemental:
+            lines += ["", "## Supplemental source tree", "",
+                      f"Root: `{supplemental['root']}`; COBOL files: {supplemental['cobol_files']}; "
+                      f"JCL folder: `{supplemental.get('jcl_dir') or 'not selected'}`", "",
+                      "| Program | Status | Source candidates |", "| --- | --- | --- |"]
+            for row in supplemental["programs"]:
+                paths = ", ".join(row["files"]).replace("|", "\\|")
+                lines.append(f"| {row['program']} | {row['status']} | {paths} |")
         def cell(value):
             return str(value).replace("|", "\\|").replace("\n", " ").replace("\r", " ")
 
@@ -317,6 +326,11 @@ class RunReport:
                         escape(finding["subject"]) + ":</strong> " + escape(finding["detail"]) + "</li>")
         body.append("</ul>")
         table("Configuration", [dict(setting=k, value=v) for k, v in data["metadata"].items()], ("setting", "value"))
+        supplemental = data.get("supplemental") or {}
+        if supplemental:
+            table("Supplemental source tree", [dict(program=row["program"], status=row["status"],
+                files=", ".join(row["files"])) for row in supplemental["programs"]],
+                ("program", "status", "files"))
         table("Pipeline stages", data["stages"], ("name", "status", "started_at", "finished_at", "note", "error"))
         table("Commands and logs", data["commands"], ("command", "exit_code", "log", "error"))
         table("Input inventory", data["files"], ("role", "path", "status", "bytes", "modified_at"))

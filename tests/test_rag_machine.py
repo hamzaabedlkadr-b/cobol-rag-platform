@@ -9,6 +9,63 @@ from scripts import rag_machine
 
 
 class MachineSetupTests(unittest.TestCase):
+    def test_setup_preserves_configured_model_by_default(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / ".env").write_text("COBOL_RAG_LLM_MODEL=qwen3.6:35b\n")
+            with patch.object(rag_machine, "ROOT", root):
+                self.assertEqual(rag_machine.model_default(), "qwen3.6:35b")
+
+    def test_preflight_does_not_run_docker_or_import(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            inputs = root / "inputs" / "A"
+            inputs.mkdir(parents=True)
+            for filename in ("A.CBL", "A_RESULT.TXT", "A_CONTROLFLOW.JSON"):
+                (inputs / filename).write_text("test")
+            copybooks = root / "copybooks"
+            copybooks.mkdir()
+            (copybooks / "A.CPY").write_text("copy")
+            args = SimpleNamespace(programs_dir=inputs.parent, copybooks_dir=copybooks,
+                                   supplemental_dir=None, jcl_dir=None, preflight_only=True)
+            with patch.object(rag_machine, "check_docker", side_effect=AssertionError("Docker called")), \
+                 patch.object(rag_machine, "install_inputs", side_effect=AssertionError("Imported")):
+                rag_machine._setup(args)
+
+    def test_supplemental_tree_preserves_organized_version_and_finds_jcl(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            primary = root / "organized" / "A"
+            primary.mkdir(parents=True)
+            (primary / "A.CBL").write_text("ORIGINAL")
+            supplemental = root / "supplemental"
+            (supplemental / "ted" / "cics").mkdir(parents=True)
+            (supplemental / "ted" / "batch").mkdir(parents=True)
+            (supplemental / "jcl-main").mkdir()
+            (supplemental / "ted" / "cics" / "A.CBL").write_text("DIFFERENT")
+            (supplemental / "ted" / "batch" / "B.CBL").write_text("NEW")
+            (supplemental / "jcl-main" / "JOB1.JCL").write_text("//RUN EXEC PGM=B\n")
+            inventory, added, jcl = rag_machine.inspect_supplemental(supplemental, [
+                rag_machine.ProgramInput("A", primary / "A.CBL", primary / "A_result.txt",
+                                         primary / "A_controlflow.json")])
+            statuses = {row["program"]: row["status"] for row in inventory["programs"]}
+            self.assertEqual(statuses, {"A": "conflicting_version", "B": "missing_analysis_inputs"})
+            self.assertEqual(added, [])
+            self.assertEqual(jcl, supplemental / "jcl-main")
+            self.assertEqual((primary / "A.CBL").read_text(), "ORIGINAL")
+
+    def test_supplemental_complete_program_can_be_added(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            folder = root / "batch" / "NEWPROG"
+            folder.mkdir(parents=True)
+            for name in ("NEWPROG.CBL", "NEWPROG_result.txt", "NEWPROG_controlflow.json"):
+                (folder / name).write_text("input")
+            inventory, added, jcl = rag_machine.inspect_supplemental(root, [])
+            self.assertEqual(inventory["programs"][0]["status"], "additional_complete_program")
+            self.assertEqual([item.name for item in added], ["NEWPROG"])
+            self.assertIsNone(jcl)
+
     def test_switch_rag_mode_fetches_requested_branch_without_resetting(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary) / "cobol-rag-platform"

@@ -84,6 +84,11 @@ def read_json(url: str, timeout: int = 15) -> dict:
 
 
 def model_default() -> str:
+    env_path = ROOT / ".env"
+    if env_path.is_file():
+        match = re.search(r"^COBOL_RAG_LLM_MODEL=(.+)$", env_path.read_text(), re.MULTILINE)
+        if match and match.group(1).strip():
+            return match.group(1).strip().strip('"\'')
     if platform.system() == "Darwin" and platform.machine().lower() in {"arm64", "aarch64"}:
         return "gemma4:e4b-mlx"
     return "gemma4:e4b"
@@ -116,6 +121,53 @@ def discover_programs(root: Path) -> tuple[list[ProgramInput], list[str]]:
             continue
         complete.append(ProgramInput(name, *(files[item] for item in expected)))
     return complete, skipped
+
+
+def inspect_supplemental(root: Path, programs: list[ProgramInput]) -> tuple[dict, list[ProgramInput], Path | None]:
+    """Inventory a heterogeneous source tree without replacing organized inputs."""
+    if not root.is_dir():
+        raise RuntimeError(f"Supplemental source folder does not exist: {root}")
+    organized = {item.name: item for item in programs}
+    by_name: dict[str, list[Path]] = {}
+    for path in sorted(root.rglob("*")):
+        if path.is_file() and path.suffix.upper() in {".CBL", ".COB"} and not any(
+            part.startswith(".") for part in path.relative_to(root).parts
+        ):
+            by_name.setdefault(path.stem.upper(), []).append(path)
+    rows = []
+    added = []
+    for name, paths in sorted(by_name.items()):
+        digests = {sha256(path) for path in paths}
+        primary = organized.get(name)
+        if primary:
+            status = "identical_to_organized" if digests == {sha256(primary.source)} else "conflicting_version"
+        elif len(digests) > 1:
+            status = "ambiguous_versions"
+        else:
+            candidates = []
+            for source in paths:
+                siblings = {path.name.upper(): path for path in source.parent.iterdir() if path.is_file()}
+                mapa = siblings.get(f"{name}_RESULT.TXT")
+                controlflow = siblings.get(f"{name}_CONTROLFLOW.JSON")
+                if mapa and controlflow:
+                    candidates.append((source, mapa, controlflow))
+            if candidates:
+                source, mapa, controlflow = candidates[0]
+                added.append(ProgramInput(name, source, mapa, controlflow))
+                status = "additional_complete_program"
+            else:
+                status = "missing_analysis_inputs"
+        rows.append({"program": name, "status": status,
+                     "files": [str(path) for path in paths], "sha256": sorted(digests)})
+    jcl_roots = sorted(path for path in root.rglob("*") if path.is_dir() and
+                       path.name.lower() in {"jcl-main", "jcl"} and
+                       any(p.is_file() and p.suffix.lower() in {".jcl", ".proc", ".prc"}
+                           for p in path.rglob("*")))
+    selected_jcl = jcl_roots[0] if len(jcl_roots) == 1 else None
+    report = {"root": str(root), "cobol_files": sum(len(paths) for paths in by_name.values()),
+              "programs": rows, "jcl_candidates": [str(path) for path in jcl_roots],
+              "jcl_dir": str(selected_jcl) if selected_jcl else None}
+    return report, added, selected_jcl
 
 
 def ensure_repositories(parent: Path, *, skip_update: bool, dry_run: bool) -> None:
@@ -234,14 +286,16 @@ def install_inputs(programs: list[ProgramInput], copybooks: Path, *, replace: bo
     for program in programs:
         target = analysis / program.name
         program_jcl = program.source.parent / "jcl"
-        if jcl_dir is not None and program_jcl.is_dir():
-            raise RuntimeError(
-                f"Both shared and program-specific JCL were supplied for {program.name}; choose one source"
-            )
         selected_jcl = jcl_dir if jcl_dir is not None else (program_jcl if program_jcl.is_dir() else None)
-        selected_jcl_files = jcl_files if jcl_dir is not None else (
-            jcl_files_in(selected_jcl) if selected_jcl is not None else []
-        )
+        selected_by_name = {source.name.casefold(): source for source in jcl_files}
+        if program_jcl.is_dir():
+            for source in jcl_files_in(program_jcl):
+                key = source.name.casefold()
+                previous = selected_by_name.get(key)
+                if previous is not None and sha256(previous) != sha256(source):
+                    raise RuntimeError(f"Conflicting shared/program JCL member {source.name} for {program.name}")
+                selected_by_name.setdefault(key, source)
+        selected_jcl_files = list(selected_by_name.values())
         for source, filename in (
             (program.source, f"{program.name}.CBL"),
             (program.mapa, f"{program.name}_result.txt"),
@@ -359,6 +413,8 @@ def setup(args: argparse.Namespace) -> None:
     report = RunReport(ROOT / ".runs" / "reports", "setup", {
         "programs_dir": str(args.programs_dir), "copybooks_dir": str(args.copybooks_dir),
         "jcl_dir": str(args.jcl_dir) if args.jcl_dir else None,
+        "supplemental_dir": str(getattr(args, "supplemental_dir", None) or "") or None,
+        "preflight_only": bool(getattr(args, "preflight_only", False)),
         "llm_model": args.llm_model, "embedding_model": args.embedding_model,
     })
     report.attempt(report.input_tree, args.programs_dir.resolve(), args.copybooks_dir.resolve(), args.jcl_dir)
@@ -400,13 +456,38 @@ def _setup(args: argparse.Namespace) -> None:
     programs, skipped = discover_programs(args.programs_dir.resolve())
     for reason in skipped:
         say("SKIP " + reason)
+    supplemental = getattr(args, "supplemental_dir", None)
+    supplemental_jcl = None
+    if supplemental is not None:
+        inventory, extra_programs, supplemental_jcl = inspect_supplemental(supplemental.resolve(), programs)
+        programs.extend(extra_programs)
+        if _ACTIVE_REPORT is not None:
+            _ACTIVE_REPORT.data["supplemental"] = inventory
+        say(f"Supplemental COBOL files inspected: {inventory['cobol_files']}")
+        for row in inventory["programs"]:
+            if row["status"] not in {"identical_to_organized", "additional_complete_program"}:
+                say(f"SUPPLEMENTAL {row['program']}: {row['status']} (organized inputs remain authoritative)")
+                if _ACTIVE_REPORT is not None:
+                    _ACTIVE_REPORT.issue("warning", row["files"][0],
+                                         f"{row['program']}: {row['status']}; source not imported")
+    selected_jcl = args.jcl_dir.resolve() if args.jcl_dir is not None else supplemental_jcl
+    if supplemental is not None and selected_jcl is None and len(inventory["jcl_candidates"]) > 1:
+        raise RuntimeError("Several supplemental JCL folders found; select one with --jcl-dir: " +
+                           ", ".join(inventory["jcl_candidates"]))
+    if _ACTIVE_REPORT is not None and selected_jcl is not None:
+        _ACTIVE_REPORT.data["metadata"]["selected_jcl_dir"] = str(selected_jcl)
+        if args.jcl_dir is None:
+            _ACTIVE_REPORT.library(selected_jcl, "jcl")
     if not programs:
         raise RuntimeError("No complete program folders found; nothing will be indexed")
     if not args.copybooks_dir.is_dir() or not any(p.is_file() for p in args.copybooks_dir.rglob("*")):
         raise RuntimeError(f"Copybook folder is missing or empty: {args.copybooks_dir}")
-    if args.jcl_dir is not None:
-        say(f"JCL files available: {len(jcl_files_in(args.jcl_dir))}")
+    if selected_jcl is not None:
+        say(f"JCL files available: {len(jcl_files_in(selected_jcl))} from {selected_jcl}")
     say("Programs to index: " + ", ".join(item.name for item in programs))
+    if getattr(args, "preflight_only", False):
+        say("Preflight complete; no files were imported and no analysis was run")
+        return
     if not args.dry_run:
         check_docker()
     ensure_repositories(ROOT.parent, skip_update=args.skip_repo_update, dry_run=args.dry_run)
@@ -415,7 +496,7 @@ def _setup(args: argparse.Namespace) -> None:
     else:
         say("Model pull skipped; ensure both models exist on the configured Ollama server")
     install_inputs(programs, args.copybooks_dir.resolve(), replace=args.replace_inputs, dry_run=args.dry_run,
-                   jcl_dir=args.jcl_dir.resolve() if args.jcl_dir is not None else None)
+                   jcl_dir=selected_jcl)
     container_url = args.container_ollama_url or (
         "http://host.docker.internal:11434" if urlparse(args.ollama_url).hostname in {"localhost", "127.0.0.1"}
         else args.ollama_url
@@ -515,6 +596,10 @@ def main() -> int:
     install.add_argument("--programs-dir", type=Path, required=True, help="Parent containing one folder per program")
     install.add_argument("--copybooks-dir", type=Path, required=True, help="Shared copybook tree")
     install.add_argument("--jcl-dir", type=Path, help="Optional shared folder of .jcl/.txt jobs and .proc/.prc procedure members (unique filenames)")
+    install.add_argument("--supplemental-dir", type=Path,
+                         help="Additional nested COBOL/JCL tree; organized inputs win on name conflicts")
+    install.add_argument("--preflight-only", action="store_true",
+                         help="Write the input report without importing, building, or starting services")
     install.add_argument("--llm-model", default=model_default())
     install.add_argument("--embedding-model", default="mxbai-embed-large:latest")
     install.add_argument("--ollama-url", default="http://localhost:11434", help="URL reachable from host")
