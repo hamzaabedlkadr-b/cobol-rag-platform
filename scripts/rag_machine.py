@@ -272,13 +272,17 @@ def add_jcl_setting(content: str, value: str, *, replace: bool) -> str:
 
 
 def install_inputs(programs: list[ProgramInput], copybooks: Path, *, replace: bool, dry_run: bool,
-                   jcl_dir: Path | None = None) -> None:
+                   jcl_dir: Path | None = None, replace_jcl: bool = False) -> None:
     if not copybooks.is_dir():
         raise RuntimeError(f"Copybook folder does not exist: {copybooks}")
     copybook_files = sorted(p for p in copybooks.rglob("*") if p.is_file())
     if not copybook_files:
         raise RuntimeError(f"Copybook folder is empty: {copybooks}")
     analysis = ROOT.parent / "control_flow" / "input"
+    def is_jcl_target(path: Path) -> bool:
+        parts = path.relative_to(analysis).parts
+        return len(parts) == 3 and parts[1] == "jcl"
+
     planned_files: list[tuple[Path, Path]] = []
     planned_manifests: list[tuple[str, Path]] = []
     jcl_files = jcl_files_in(jcl_dir) if jcl_dir is not None else []
@@ -320,7 +324,7 @@ def install_inputs(programs: list[ProgramInput], copybooks: Path, *, replace: bo
         if manifest_matches(manifest_path, manifest):
             if selected_jcl is not None:
                 original = manifest_path.read_text()
-                updated = add_jcl_setting(original, f"input/{program.name}/jcl", replace=replace)
+                updated = add_jcl_setting(original, f"input/{program.name}/jcl", replace=replace or replace_jcl)
                 if updated != original:
                     planned_manifests.append((updated, manifest_path))
                     jcl_manifest_updates.add(manifest_path)
@@ -334,13 +338,14 @@ def install_inputs(programs: list[ProgramInput], copybooks: Path, *, replace: bo
     # a partially imported program behind.
     if not replace:
         for source, target in planned_files:
-            if target.exists() and sha256(source) != sha256(target):
-                raise RuntimeError(f"Different file already exists: {target}; use --replace-inputs to replace it")
+            if target.exists() and sha256(source) != sha256(target) and not (replace_jcl and is_jcl_target(target)):
+                option = "--replace-jcl" if is_jcl_target(target) else "--replace-inputs"
+                raise RuntimeError(f"Different file already exists: {target}; use {option} to replace it")
         for content, target in planned_manifests:
             if target.exists() and target.read_text() != content and target not in jcl_manifest_updates:
                 raise RuntimeError(f"Different manifest already exists: {target}; use --replace-inputs to replace it")
     for source, target in planned_files:
-        copy_checked(source, target, replace=replace, dry_run=dry_run)
+        copy_checked(source, target, replace=replace or (replace_jcl and is_jcl_target(target)), dry_run=dry_run)
     for content, target in planned_manifests:
         write_checked(content, target, replace=replace or target in jcl_manifest_updates, dry_run=dry_run)
 
@@ -415,6 +420,7 @@ def setup(args: argparse.Namespace) -> None:
         "jcl_dir": str(args.jcl_dir) if args.jcl_dir else None,
         "supplemental_dir": str(getattr(args, "supplemental_dir", None) or "") or None,
         "preflight_only": bool(getattr(args, "preflight_only", False)),
+        "replace_jcl": bool(getattr(args, "replace_jcl", False)),
         "llm_model": args.llm_model, "embedding_model": args.embedding_model,
     })
     report.attempt(report.input_tree, args.programs_dir.resolve(), args.copybooks_dir.resolve(), args.jcl_dir)
@@ -496,7 +502,7 @@ def _setup(args: argparse.Namespace) -> None:
     else:
         say("Model pull skipped; ensure both models exist on the configured Ollama server")
     install_inputs(programs, args.copybooks_dir.resolve(), replace=args.replace_inputs, dry_run=args.dry_run,
-                   jcl_dir=selected_jcl)
+                   jcl_dir=selected_jcl, replace_jcl=getattr(args, "replace_jcl", False))
     container_url = args.container_ollama_url or (
         "http://host.docker.internal:11434" if urlparse(args.ollama_url).hostname in {"localhost", "127.0.0.1"}
         else args.ollama_url
@@ -617,6 +623,7 @@ def main() -> int:
     install.add_argument("--skip-repo-update", action="store_true")
     install.add_argument("--skip-model-pull", action="store_true")
     install.add_argument("--replace-inputs", action="store_true", help="Allow replacing different imported files/manifests")
+    install.add_argument("--replace-jcl", action="store_true", help="Replace different imported JCL only; protect COBOL, MAPA, CFG and copybooks")
     install.add_argument("--dry-run", action="store_true")
     launch = sub.add_parser("start", help="Recreate the API without rebuilding the corpus")
     launch.add_argument("--ollama-url", help="Host-reachable Ollama URL; defaults to value inferred from .env")

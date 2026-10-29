@@ -244,6 +244,39 @@ class MachineSetupTests(unittest.TestCase):
                 rag_machine.install_inputs([program], copybooks, replace=False, dry_run=False)
                 self.assertEqual(manifest.read_text(), updated)
 
+    def test_replace_jcl_updates_only_jcl_and_keeps_other_collision_guard(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            platform_root = root / "platform"
+            inputs = root / "inputs"
+            inputs.mkdir()
+            files = [inputs / name for name in ("A.CBL", "A_result.txt", "A_controlflow.json")]
+            for file in files:
+                file.write_text("original")
+            copybooks = root / "copybooks"
+            copybooks.mkdir()
+            (copybooks / "X.CPY").write_text("copy")
+            jobs = root / "jobs"
+            jobs.mkdir()
+            (jobs / "JOB.JCL").write_text("old job")
+            program = rag_machine.ProgramInput("A", *files)
+            with patch.object(rag_machine, "ROOT", platform_root):
+                rag_machine.install_inputs([program], copybooks, replace=False, dry_run=False, jcl_dir=jobs)
+                imported = root / "control_flow" / "input" / "A"
+                (jobs / "JOB.JCL").write_text("new job")
+                with self.assertRaisesRegex(RuntimeError, "--replace-jcl"):
+                    rag_machine.install_inputs([program], copybooks, replace=False, dry_run=False, jcl_dir=jobs)
+                rag_machine.install_inputs([program], copybooks, replace=False, replace_jcl=True,
+                                           dry_run=False, jcl_dir=jobs)
+                self.assertEqual((imported / "jcl" / "JOB.JCL").read_text(), "new job")
+                (files[0]).write_text("different COBOL")
+                (jobs / "JOB.JCL").write_text("third job")
+                with self.assertRaisesRegex(RuntimeError, "--replace-inputs"):
+                    rag_machine.install_inputs([program], copybooks, replace=False, replace_jcl=True,
+                                               dry_run=False, jcl_dir=jobs)
+                self.assertEqual((imported / "jcl" / "JOB.JCL").read_text(), "new job")
+                self.assertEqual((imported / "A.CBL").read_text(), "original")
+
     def test_jcl_validation_and_path_conflicts(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

@@ -61,6 +61,11 @@ that every program runs in every job. Dataset access marked uncertain remains
 uncertain in answers. This import does not yet ingest CICS transaction resource
 definitions from the supplemental tree, and category folder names alone do not
 prove a program's execution mode.
+If an existing imported JCL file differs from the selected library, inspect
+the two versions and use `--replace-jcl` only when the selected library should
+win. This option updates JCL files and JCL manifest paths while continuing to
+reject different COBOL, MAPA, CFG, and copybook inputs; `--replace-inputs` is
+the broader replacement option.
 
 Each successful program publish also refreshes
 `.runs/_corpus/rag/final_scripts/corpus.relationships.json`. This directed,
