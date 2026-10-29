@@ -62,6 +62,16 @@ uncertain in answers. This import does not yet ingest CICS transaction resource
 definitions from the supplemental tree, and category folder names alone do not
 prove a program's execution mode.
 
+Each successful program publish also refreshes
+`.runs/_corpus/rag/final_scripts/corpus.relationships.json`. This directed,
+source-backed corpus graph connects analyzed program calls, COPY inclusions,
+linked JCL job steps, and classified DD dataset access. Its coverage section
+identifies missing or invalid per-program artifacts; a missing edge must not
+be treated as proof of absence when coverage is incomplete. The large-model
+investigation branch exposes this graph through the `connections` tool. The
+setup report lists programs skipped because their input triplet is incomplete
+and programs whose doctor or analysis stage failed.
+
 ```sh
 ./setup.sh --programs-dir /absolute/path/my-programs --copybooks-dir /absolute/path/all-copybooks --dry-run
 ./setup.sh --programs-dir /absolute/path/my-programs --copybooks-dir /absolute/path/all-copybooks

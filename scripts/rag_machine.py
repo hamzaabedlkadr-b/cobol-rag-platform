@@ -519,6 +519,16 @@ def _setup(args: argparse.Namespace) -> None:
     say("Successfully processed: " + (", ".join(succeeded) or "none"))
     for failure in failed:
         say(f"FAILED {failure['program']} at {failure['stage']}: {failure['error']}")
+    graph_path = ROOT / ".runs" / "_corpus" / "rag" / "final_scripts" / "corpus.relationships.json"
+    if not args.dry_run and graph_path.is_file():
+        try:
+            graph = json.loads(graph_path.read_text(encoding="utf-8"))
+            gaps = [(program, artifact, status) for program, statuses in graph.get("coverage", {}).items()
+                    for artifact, status in statuses.items() if status != "available"]
+            say(f"Corpus graph: {graph.get('counts', {}).get('edges', 0)} edges across "
+                f"{graph.get('counts', {}).get('programs', 0)} analyzed programs; {len(gaps)} artifact gaps")
+        except (OSError, ValueError) as error:
+            say(f"Corpus graph summary unavailable: {error}")
     if not succeeded:
         raise RuntimeError("No programs completed successfully; API was not started")
     run(["docker", "compose", "up", "-d", "--no-deps", "--force-recreate", "rag-api"], dry_run=args.dry_run)

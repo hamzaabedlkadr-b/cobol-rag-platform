@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from cobol_rag_platform.config import PlatformConfig, ProgramConfig
+from cobol_rag_platform.corpus_relationships import publish_relationships
 from cobol_rag_platform.reporting import RunReport, now
 
 
@@ -325,7 +326,8 @@ class Pipeline:
         bundle = self._bundle_for_planning() if self.dry_run else self._resolve_bundle(allow_missing=True)
         mode = self._analysis_mode(bundle)
         artifact, final_scripts = self._rag_source(mode)
-        inputs = [artifact, self.platform.repositories.rag / "src", self.platform.repositories.rag / "config" / "system_prompt.md"]
+        inputs = [artifact, self.platform.repositories.rag / "src", self.platform.repositories.rag / "config" / "system_prompt.md",
+                  Path(__file__).with_name("corpus_relationships.py")]
         fingerprint = fingerprint_paths(
             inputs,
             extra={
@@ -337,13 +339,15 @@ class Pipeline:
         )
         manifest = self.rag_runtime / "data" / "manifests" / f"{self.collection}.json"
         chroma = self.rag_runtime / ".chroma"
-        if self._cached("index", fingerprint, (manifest, chroma)):
-            return StageResult("index", "cached", fingerprint, (str(chroma), str(manifest)))
+        relationships = self.corpus_final_scripts / "corpus.relationships.json"
+        if self._cached("index", fingerprint, (manifest, chroma, relationships)):
+            return StageResult("index", "cached", fingerprint, (str(chroma), str(manifest), str(relationships)))
         if not artifact.is_file() and not self.dry_run:
             raise PipelineError(f"RAG artifact does not exist: {artifact}")
         config_path = self.rag_runtime / "config" / "runtime.yaml"
         if not self.dry_run:
             self._publish_program_artifacts(final_scripts)
+            publish_relationships(self.corpus_final_scripts)
             self._write_rag_runtime(config_path, self.corpus_final_scripts)
         command = [
             self.platform.rag.python,
@@ -359,8 +363,8 @@ class Pipeline:
         self._run_command("RAG index", command, cwd=self.platform.repositories.rag, env=env)
         if not self.dry_run and not manifest.is_file():
             raise PipelineError(f"RAG sync completed but collection manifest is missing: {manifest}")
-        return self._complete("index", fingerprint, (chroma, manifest)) if not self.dry_run else StageResult(
-            "index", "planned", fingerprint, (str(chroma), str(manifest))
+        return self._complete("index", fingerprint, (chroma, manifest, relationships)) if not self.dry_run else StageResult(
+            "index", "planned", fingerprint, (str(chroma), str(manifest), str(relationships))
         )
 
     def status(self) -> dict[str, Any]:
