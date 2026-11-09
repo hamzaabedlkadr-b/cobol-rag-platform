@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import errno
 import hashlib
 import json
-import re
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -630,25 +631,55 @@ observability:
         return env
 
     def _publish_program_artifacts(self, source: Path) -> None:
-        """Atomically publish one program into the shared final_scripts registry."""
+        """Stage a program's artifacts without duplicating its JCL analysis tree."""
         if not source.is_dir():
             raise PipelineError(f"Program final_scripts directory does not exist: {source}")
         destination = self.corpus_final_scripts / self.program.name
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        temp = destination.parent / f".{self.program.name}.tmp-{uuid.uuid4().hex}"
-        shutil.copytree(source, temp)
         if destination.parent.resolve() != self.corpus_final_scripts.resolve():
             raise PipelineError(f"Refusing to publish outside corpus registry: {destination}")
-        if destination.exists():
-            shutil.rmtree(destination)
-        temp.replace(destination)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        suffix = uuid.uuid4().hex
+        temp = destination.parent / f".{self.program.name}.tmp-{suffix}"
+        previous = destination.parent / f".{self.program.name}.previous-{suffix}"
+        jcl = (source / "jcl").resolve()
+        # Both Docker services mount the same .runs tree. Keep the original JCL
+        # evidence path readable from the corpus without copying every job.
+        # Never link to an external input bundle.
+        link_jcl = jcl.is_dir() and jcl.is_relative_to(self.run_dir)
+
+        def ignore_jcl(folder: str, names: list[str]) -> set[str]:
+            return {"jcl"} if Path(folder) == source and "jcl" in names else set()
+
+        try:
+            shutil.copytree(source, temp, ignore=ignore_jcl if link_jcl else None)
+            if link_jcl:
+                try:
+                    (temp / "jcl").symlink_to(os.path.relpath(jcl, temp), target_is_directory=True)
+                except OSError as error:
+                    # Some native filesystems do not allow directory symlinks.
+                    # Do not retry resource exhaustion as a full copy.
+                    if error.errno not in {errno.EPERM, errno.EACCES, errno.ENOTSUP, errno.ENOSYS}:
+                        raise
+                    shutil.copytree(jcl, temp / "jcl")
+            try:
+                if destination.exists():
+                    destination.replace(previous)
+                temp.replace(destination)
+            except BaseException:
+                if previous.exists() and not destination.exists():
+                    previous.replace(destination)
+                raise
+            shutil.rmtree(previous, ignore_errors=True)
+        finally:
+            shutil.rmtree(temp, ignore_errors=True)
         self._write_corpus_registry()
 
     def _write_corpus_registry(self) -> None:
         """Write the small routing catalogue used before any retrieval occurs."""
         programs: list[dict[str, Any]] = []
         if self.corpus_final_scripts.is_dir():
-            for program_root in sorted(path for path in self.corpus_final_scripts.iterdir() if path.is_dir()):
+            for program_root in sorted(path for path in self.corpus_final_scripts.iterdir()
+                                       if not path.name.startswith(".") and path.is_dir()):
                 program = program_root.name.upper()
                 entities: dict[tuple[str, str], dict[str, str]] = {}
 

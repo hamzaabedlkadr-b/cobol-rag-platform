@@ -38,7 +38,7 @@ def _edge(kind: str, source: str, target: str, *, program: str, artifact: str,
 
 def build_relationships(root: Path) -> dict[str, Any]:
     """Only explicit analyzed facts become edges; missing evidence stays visible."""
-    program_dirs = {p.name.upper(): p for p in root.iterdir() if p.is_dir()}
+    program_dirs = {p.name.upper(): p for p in root.iterdir() if not p.name.startswith(".") and p.is_dir()}
     programs = sorted(program_dirs)
     known = set(programs)
     edges: list[dict[str, Any]] = []

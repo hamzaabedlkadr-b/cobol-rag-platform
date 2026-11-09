@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import errno
 import json
+import shutil
 import tempfile
 import unittest
 from dataclasses import replace
 from pathlib import Path
+from unittest.mock import patch
 
 from cobol_rag_platform.config import load_platform, load_program
 from cobol_rag_platform.pipeline import Pipeline, fingerprint_paths
@@ -47,6 +50,56 @@ class PlatformTests(unittest.TestCase):
             path.write_text("second", encoding="utf-8")
             after = fingerprint_paths([path])
         self.assertNotEqual(before, after)
+
+    def test_publish_reuses_cached_jcl_without_copying_it(self) -> None:
+        platform = load_platform(ROOT / "config" / "platform.toml")
+        program = load_program(ROOT / "programs" / "PDCBVC" / "program.toml", platform)
+        with tempfile.TemporaryDirectory() as temp:
+            pipeline = Pipeline(platform, program, Path(temp) / "runs")
+            source = pipeline.analysis_output / "artifacts"
+            job = source / "jcl" / "JOB1"
+            job.mkdir(parents=True)
+            (job / "jcl.summary.json").write_text('{"job": "JOB1"}')
+            (source / "jcl.file_io.json").write_text('{"content": {"known_jobs": ["JOB1"]}}')
+            destination = pipeline.corpus_final_scripts / program.name
+            (pipeline.corpus_final_scripts / ".FAILED.tmp-orphan").mkdir(parents=True)
+            copytree = shutil.copytree
+
+            def copy_with_jcl_failure(src, dst, *args, **kwargs):
+                if Path(src).name == "jcl":
+                    raise OSError(errno.ENOMEM, "Cannot allocate memory")
+                return copytree(src, dst, *args, **kwargs)
+
+            with patch("cobol_rag_platform.pipeline.shutil.copytree", side_effect=copy_with_jcl_failure):
+                pipeline._publish_program_artifacts(source)
+            self.assertTrue((destination / "jcl").is_symlink())
+            self.assertEqual(list((destination / "jcl").glob("**/jcl.summary.json"))[0].read_text(),
+                             '{"job": "JOB1"}')
+            self.assertTrue((destination / "jcl.file_io.json").is_file())
+            registry = json.loads((pipeline.corpus_final_scripts / "corpus.registry.json").read_text())
+            self.assertEqual([row["program"] for row in registry["programs"]], [program.name])
+
+    def test_failed_publication_preserves_previous_artifacts(self) -> None:
+        platform = load_platform(ROOT / "config" / "platform.toml")
+        program = load_program(ROOT / "programs" / "PDCBVC" / "program.toml", platform)
+        with tempfile.TemporaryDirectory() as temp:
+            pipeline = Pipeline(platform, program, Path(temp) / "runs")
+            source = pipeline.analysis_output / "artifacts"
+            source.mkdir(parents=True)
+            destination = pipeline.corpus_final_scripts / program.name
+            destination.mkdir(parents=True)
+            (destination / "old.json").write_text("{}")
+            replace_path = Path.replace
+
+            def fail_staging_rename(path, target):
+                if ".tmp-" in path.name:
+                    raise OSError(errno.ENOMEM, "Cannot allocate memory")
+                return replace_path(path, target)
+
+            with patch.object(Path, "replace", fail_staging_rename), self.assertRaises(OSError):
+                pipeline._publish_program_artifacts(source)
+            self.assertTrue((destination / "old.json").is_file())
+            self.assertEqual(list(pipeline.corpus_final_scripts.iterdir()), [destination])
 
     def test_programs_publish_into_one_targetable_corpus_registry(self) -> None:
         platform = load_platform(ROOT / "config" / "platform.toml")

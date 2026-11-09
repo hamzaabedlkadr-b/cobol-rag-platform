@@ -14,6 +14,7 @@ class CorpusRelationshipTests(unittest.TestCase):
             b = root / "B"
             a.mkdir()
             b.mkdir()
+            (root / ".C.tmp-incomplete").mkdir()
             (a / "architecture.call_parameters.json").write_text(json.dumps({"calls": [
                 {"caller": "A", "target": "B", "call_type": "CICSLINK", "line_start": 42,
                  "parameters": ["AREA"], "commarea": "AREA"},
@@ -28,6 +29,7 @@ class CorpusRelationshipTests(unittest.TestCase):
                 "unknowns": [{"job": "JOB1", "step": "RUN", "ddname": "MAYBE", "dsn": "DATA.MAYBE",
                               "access_type": "unknown"}]}}))
             graph = build_relationships(root)
+            self.assertEqual(graph["programs"], ["A", "B"])
             calls = [e for e in graph["edges"] if e["kind"] == "program_call"]
             self.assertEqual({(e["source"], e["target"]) for e in calls},
                              {("A", "B"), ("A", "EXTERNAL")})
