@@ -1,4 +1,5 @@
 chromadb
+ijson>=3.3,<4
 fastapi
 llama-index
 llama-index-embeddings-ollama
